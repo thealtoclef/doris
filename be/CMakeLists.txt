@@ -358,6 +358,7 @@ if ("${CMAKE_BUILD_TARGET_ARCH}" STREQUAL "x86" OR "${CMAKE_BUILD_TARGET_ARCH}" 
     add_definitions(-DLIBDIVIDE_SSE2)
     if (USE_AVX2)
         add_compile_options(-mavx2)
+        add_compile_options(-mfma)
         add_definitions(-DUSE_AVX2)
         add_definitions(-DLIBDIVIDE_AVX2)
     endif()

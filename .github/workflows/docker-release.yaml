@@ -25,7 +25,7 @@ on:
       - "**/version.txt"
 
 jobs:
-  call-docker-release:
+  release-fe:
     permissions:
       id-token: write
       contents: write
@@ -38,3 +38,16 @@ jobs:
       force_build: true
       dockerfile_path: docker/source-build/fe/Dockerfile
       image_suffix: fe
+  release-be:
+    permissions:
+      id-token: write
+      contents: write
+      packages: write
+    uses: thealtoclef/modular-automations/.github/workflows/docker-release.yaml@main
+    with:
+      runs_on: ${{ github.event.inputs.runs_on || 'self-hosted' }}
+      warp_build_profile: ${{ github.event.inputs.warp_build_profile || '' }}
+      platforms: ${{ github.event.inputs.profiles || 'linux/amd64' }}
+      force_build: true
+      dockerfile_path: docker/source-build/be/Dockerfile
+      image_suffix: be

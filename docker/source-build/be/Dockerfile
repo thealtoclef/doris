@@ -21,23 +21,25 @@ FROM apache/doris:build-env-ldb-toolchain-latest as builder
 # Copy the entire Doris source code
 COPY . .
 
-# Build FE
-RUN sh build.sh --fe
+# Build BE
+RUN sh build.sh --be DISABLE_BUILD_AZURE=ON
 
-# Stage 2: Runtime Environment following docker/runtime/fe/Dockerfile
+# Stage 2: Runtime Environment following docker/runtime/be/Dockerfile
 FROM apache/doris:base-latest
 
-# Use JDK 17 for FE
+# Use JDK 17 for BE
 RUN ln -s /usr/lib/jvm/jdk-17 /usr/lib/jvm/java && rm -rf /usr/lib/jvm/jdk-8
 ENV JAVA_HOME=/usr/lib/jvm/java
-ENV PATH=$PATH:$JAVA_HOME/bin:/opt/apache-doris/fe/bin
+ENV PATH=$PATH:$JAVA_HOME/bin:/opt/apache-doris/be/bin
 
-# Copy FE built binaries from builder stage
-COPY --from=builder /root/output/fe /opt/apache-doris/fe
+# Copy BE built binaries from builder stage
+COPY --from=builder /root/output/be /opt/apache-doris/be
 
-# Copy FE resource files from source repository
-COPY docker/runtime/fe/resource/init_fe.sh /usr/local/bin/
+# Copy BE resource files from source repository
+COPY docker/runtime/be/resource/be_*.sh /opt/apache-doris/
 
-COPY docker/runtime/fe/resource/fe_*.sh /opt/apache-doris/
+COPY docker/runtime/be/resource/entry_point.sh /usr/local/bin/
 
-ENTRYPOINT ["bash","init_fe.sh"]
+COPY docker/runtime/be/resource/init_be.sh /usr/local/bin/
+
+ENTRYPOINT ["bash","entry_point.sh"]
