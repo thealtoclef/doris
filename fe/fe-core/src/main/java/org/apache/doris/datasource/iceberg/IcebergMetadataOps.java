@@ -244,7 +244,8 @@ public class IcebergMetadataOps implements ExternalMetadataOps {
         }
         if (!properties.isEmpty() && dorisCatalog instanceof IcebergExternalCatalog) {
             String icebergCatalogType = ((IcebergExternalCatalog) dorisCatalog).getIcebergCatalogType();
-            if (!IcebergExternalCatalog.ICEBERG_HMS.equals(icebergCatalogType)) {
+            if (!IcebergExternalCatalog.ICEBERG_HMS.equals(icebergCatalogType)
+                    && !IcebergExternalCatalog.ICEBERG_REST.equals(icebergCatalogType)) {
                 throw new DdlException(
                     "Not supported: create database with properties for iceberg catalog type: " + icebergCatalogType);
             }

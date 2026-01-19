@@ -88,10 +88,8 @@ suite("test_iceberg_show_create", "p0,external,doris,external_docker,external_do
     sql """ switch ${catalog_name} """
     sql """ drop database if exists ${db1} """
 
-    test {
-        sql """ create database ${db1} properties ('location'='${warehouse}/other_location') """
-        exception "Not supported: create database with properties for iceberg catalog type"
-    }
+    sql """ create database ${db1} properties ('location'='${warehouse}/other_location') """
+    sql """ drop database ${db1} """
 
     sql """ drop database if exists ${db1} """
     sql """drop catalog if exists ${catalog_name}"""
