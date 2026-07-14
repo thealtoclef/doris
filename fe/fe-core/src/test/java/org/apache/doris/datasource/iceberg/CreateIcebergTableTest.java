@@ -234,6 +234,38 @@ public class CreateIcebergTableTest {
     }
 
     @Test
+    public void testCustomLocation() throws Exception {
+        Path customLocationPath = Files.createTempDirectory("test_custom_location_");
+        String customLocation = "file://" + customLocationPath.toAbsolutePath() + "/" + getTableName();
+        TableIdentifier tb = TableIdentifier.of(dbName, getTableName());
+        String sql = "create table " + tb + " (id int) engine = iceberg "
+                + "properties(\"location\"=\"" + customLocation + "\")";
+        createTable(sql);
+        Table table = ops.getCatalog().loadTable(tb);
+        Schema schema = table.schema();
+        Assert.assertEquals(1, schema.columns().size());
+        Assert.assertEquals(PartitionSpec.unpartitioned(), table.spec());
+        Assert.assertEquals(customLocation, table.location());
+        // "location" should not be stored as a table property
+        Assert.assertNull(table.properties().get("location"));
+    }
+
+    @Test
+    public void testCustomLocationWithSortOrder() throws Exception {
+        Path customLocationPath = Files.createTempDirectory("test_custom_location_sort_");
+        String customLocation = "file://" + customLocationPath.toAbsolutePath() + "/" + getTableName();
+        TableIdentifier tb = TableIdentifier.of(dbName, getTableName());
+        String sql = "create table " + tb + " (id int, name string) "
+                + "engine = iceberg "
+                + "sort by (id) "
+                + "properties(\"location\"=\"" + customLocation + "\")";
+        createTable(sql);
+        Table table = ops.getCatalog().loadTable(tb);
+        Assert.assertEquals(customLocation, table.location());
+        Assert.assertNull(table.properties().get("location"));
+    }
+
+    @Test
     public void testDropDB() {
         try {
             // create db success

@@ -94,6 +94,7 @@ import java.util.stream.Stream;
 public class IcebergMetadataOps implements ExternalMetadataOps {
 
     private static final Logger LOG = LogManager.getLogger(IcebergMetadataOps.class);
+    private static final String LOCATION_PROP = "location";
     protected Catalog catalog;
     protected ExternalCatalog dorisCatalog;
     protected SupportsNamespaces nsCatalog;
@@ -370,11 +371,29 @@ public class IcebergMetadataOps implements ExternalMetadataOps {
                 schema);
         // Build and create table with optional sort order
         org.apache.iceberg.SortOrder sortOrder = buildSortOrder(createTableInfo.getSortOrderFields(), schema);
+        // Extract custom table location if provided, so it can be passed to Iceberg
+        // as a dedicated parameter (not just a table property).
+        String location = properties.remove(LOCATION_PROP);
         if (sortOrder != null && !sortOrder.isUnsorted()) {
+            if (location != null) {
+                catalog.buildTable(getTableIdentifier(dbName, tableName), schema)
+                        .withPartitionSpec(partitionSpec)
+                        .withProperties(properties)
+                        .withLocation(location)
+                        .withSortOrder(sortOrder)
+                        .create();
+            } else {
+                catalog.buildTable(getTableIdentifier(dbName, tableName), schema)
+                        .withPartitionSpec(partitionSpec)
+                        .withProperties(properties)
+                        .withSortOrder(sortOrder)
+                        .create();
+            }
+        } else if (location != null) {
             catalog.buildTable(getTableIdentifier(dbName, tableName), schema)
                     .withPartitionSpec(partitionSpec)
+                    .withLocation(location)
                     .withProperties(properties)
-                    .withSortOrder(sortOrder)
                     .create();
         } else {
             catalog.createTable(getTableIdentifier(dbName, tableName), schema, partitionSpec, properties);
