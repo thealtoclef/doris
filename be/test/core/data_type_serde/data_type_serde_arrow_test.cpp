@@ -729,4 +729,28 @@ TEST(DataTypeSerDeArrowTest, DateTimeV2ArrowEncodingFollowsSchemaTimezone) {
     EXPECT_EQ(1783004400123456, naive_array->Value(0));
 }
 
+// A timezone-aware Arrow timestamp must decode in its declared zone, not the hardcoded +08:00
+// default, so a UTC instant declared as "+07:00" materializes as the +07:00 wall-clock value.
+TEST(DataTypeSerDeArrowTest, ReadAwareArrowTimestampHonorsDeclaredTimezone) {
+    // 1782975600 is 2026-07-02 07:00:00 UTC. Declared +07:00 => 14:00:00 local.
+    constexpr int64_t utc_instant_micros = 1782975600000000;
+    const auto schema = arrow::schema(
+            {arrow::field("ts", arrow::timestamp(arrow::TimeUnit::MICRO, "+07:00"), false)});
+    std::shared_ptr<arrow::Buffer> data = arrow::Buffer::FromString(std::string(
+            reinterpret_cast<const char*>(&utc_instant_micros), sizeof(utc_instant_micros)));
+    auto array = std::make_shared<arrow::TimestampArray>(arrow::ArrayData::Make(
+            arrow::timestamp(arrow::TimeUnit::MICRO, "+07:00"), 1, {nullptr, data}));
+    auto record_batch = arrow::RecordBatch::Make(schema, 1, {array});
+
+    auto ts_type = std::make_shared<DataTypeDateTimeV2>(6);
+    auto block = std::make_shared<Block>();
+    block->insert(ColumnWithTypeAndName(ts_type->create_column(), ts_type, "ts"));
+    CommonDataTypeSerdeTest::deserialize_arrow(block, record_batch);
+    // 14:00:00 local in the declared +07:00 zone (07:00 UTC + 7h). Scale-6 datetimev2 renders the
+    // fractional part even when it is zero.
+    EXPECT_EQ(block->get_by_position(0).to_string(0), "2026-07-02 14:00:00.000000");
+}
+
+// VARIANT columns load from Arrow STRING values whose bytes are JSON documents. This exercises the
+// DataTypeVariantSerDe::read_column_from_arrow path via the shared block converter.
 } // namespace doris

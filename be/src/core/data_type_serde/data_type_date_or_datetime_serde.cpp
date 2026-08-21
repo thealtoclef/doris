@@ -200,6 +200,8 @@ Status DataTypeDateSerDe<T>::_read_column_from_arrow(IColumn& column,
     int64_t divisor = 1;
     int64_t multiplier = 1;
     if (arrow_array->type()->id() == arrow::Type::DATE64) {
+        // DATE64 is a UTC-epoch millisecond value; decode it in the session timezone so the
+        // resulting wall-clock date matches the query time_zone.
         const auto* concrete_array = dynamic_cast<const arrow::Date64Array*>(arrow_array);
         divisor = 1000; //ms => secs
         for (auto value_i = start; value_i < end; ++value_i) {
@@ -216,10 +218,14 @@ Status DataTypeDateSerDe<T>::_read_column_from_arrow(IColumn& column,
             throw doris::Exception(doris::ErrorCode::INVALID_ARGUMENT,
                                    "Invalid Time Type: " + type->name());
         }
+        // Timezone-naive timestamps are wall-clock values and decode in UTC; timezone-aware ones
+        // decode in their declared zone (never the hardcoded default).
+        const cctz::time_zone real_ctz = arrow_timestamp_decode_timezone(type.get());
         for (auto value_i = start; value_i < end; ++value_i) {
             VecDateTimeValue v;
             v.from_unixtime(
-                    static_cast<Int64>(concrete_array->Value(value_i)) / divisor * multiplier, ctz);
+                    static_cast<Int64>(concrete_array->Value(value_i)) / divisor * multiplier,
+                    real_ctz);
             col_data.emplace_back(v);
         }
     } else if (arrow_array->type()->id() == arrow::Type::DATE32) {

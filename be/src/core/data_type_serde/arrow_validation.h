@@ -21,6 +21,8 @@
 #include <arrow/array/array_binary.h>
 #include <arrow/array/array_nested.h>
 #include <arrow/array/array_primitive.h>
+#include <arrow/type.h>
+#include <cctz/time_zone.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -32,9 +34,28 @@
 
 #include "common/compiler_util.h"
 #include "common/exception.h"
+#include "util/timezone_utils.h"
 #include "util/unaligned.h"
 
 namespace doris {
+
+// Resolve the cctz time zone used to decode an Arrow timestamp into a wall-clock Doris datetime.
+//
+// A timezone-naive Arrow timestamp (empty timezone) is a wall-clock value encoded as if it were a
+// UTC epoch, so it must decode in UTC to preserve its date/time fields unchanged. A timezone-aware
+// Arrow timestamp stores a UTC instant; decode it in its declared zone (falling back to UTC when
+// that zone cannot be resolved) so the resulting wall-clock matches what the field declares.
+inline cctz::time_zone arrow_timestamp_decode_timezone(const arrow::TimestampType* type) {
+    if (type == nullptr || type->timezone().empty()) {
+        return cctz::utc_time_zone();
+    }
+    cctz::time_zone resolved;
+    if (TimezoneUtils::find_cctz_time_zone(type->timezone(), resolved)) {
+        return resolved;
+    }
+    return cctz::utc_time_zone();
+}
+
 namespace arrow_validation_detail {
 
 inline std::string arrow_type_name(const arrow::Array& array) {

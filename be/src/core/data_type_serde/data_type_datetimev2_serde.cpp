@@ -666,8 +666,9 @@ Status DataTypeDateTimeV2SerDe::read_column_from_arrow(IColumn& column,
         }
         }
         // A timezone-naive Arrow timestamp is a wall-clock value. Decode its epoch-based
-        // representation in UTC so the session timezone does not shift its date/time fields.
-        const cctz::time_zone& real_ctz = type->timezone().empty() ? cctz::utc_time_zone() : ctz;
+        // representation in UTC so the session timezone does not shift its date/time fields. A
+        // timezone-aware timestamp decodes in its declared zone (never the hardcoded default).
+        const cctz::time_zone& real_ctz = arrow_timestamp_decode_timezone(type.get());
         const auto* base_ptr = reinterpret_cast<const uint8_t*>(concrete_array->raw_values());
         const size_t element_size = sizeof(int64_t);
         for (auto value_i = start; value_i < end; ++value_i) {

@@ -205,9 +205,13 @@ std::shared_ptr<arrow::Field> create_arrow_field_with_metadata(
 Status get_arrow_schema_from_block(const Block& block, std::shared_ptr<arrow::Schema>* result,
                                    const std::string& timezone) {
     std::vector<std::shared_ptr<arrow::Field>> fields;
+    // DATETIMEV2 is a wall-clock value, so emit a timezone-naive Arrow timestamp to keep the
+    // writer and reader consistent (see convert_to_arrow_type's datetime_naive handling).
+    constexpr bool datetime_naive = true;
     for (const auto& type_and_name : block) {
         std::shared_ptr<arrow::DataType> arrow_type;
-        RETURN_IF_ERROR(convert_to_arrow_type(type_and_name.type, &arrow_type, timezone));
+        RETURN_IF_ERROR(
+                convert_to_arrow_type(type_and_name.type, &arrow_type, timezone, datetime_naive));
         auto field = create_arrow_field_with_metadata(type_and_name.name, arrow_type,
                                                       type_and_name.type->is_nullable(),
                                                       type_and_name.type->get_primitive_type());
