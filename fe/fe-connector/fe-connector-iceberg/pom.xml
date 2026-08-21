@@ -150,6 +150,20 @@ under the License.
             <version>${iceberg.version}</version>
         </dependency>
 
+        <!-- Iceberg GCP integration: the GoogleAuthManager referenced when iceberg.rest.security.type=google,
+             plus the GCS FileIO for GCS storage access. google-cloud-storage is NOT pulled transitively by
+             iceberg-gcp, so it is declared explicitly (mirrors the legacy fe-core dependency pair). -->
+        <dependency>
+            <groupId>org.apache.iceberg</groupId>
+            <artifactId>iceberg-gcp</artifactId>
+            <version>${iceberg.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-storage</artifactId>
+            <version>2.71.0</version>
+        </dependency>
+
         <!-- The hms-flavor org.apache.iceberg.hive.HiveCatalog is NOT a direct dependency here: it is
              bundled (with the shared relocated thrift shade.doris.hive.org.apache.thrift) inside
              fe-connector-hms-hive-shade and reaches this plugin transitively via fe-connector-hms above —

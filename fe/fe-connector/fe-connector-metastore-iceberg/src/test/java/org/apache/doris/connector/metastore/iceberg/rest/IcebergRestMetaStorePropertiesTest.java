@@ -52,11 +52,21 @@ public class IcebergRestMetaStorePropertiesTest {
 
     @Test
     public void rule1InvalidSecurityType() {
-        Assertions.assertEquals("Invalid security type: bogus. Supported values are: none, oauth2",
+        Assertions.assertEquals("Invalid security type: bogus. Supported values are: none, oauth2, google",
                 validateError(raw("iceberg.rest.security.type", "bogus")));
-        // case-insensitive accept (mirrors Security.valueOf(toUpperCase)).
+        // case-insensitive accept.
         IcebergRestMetaStoreProperties.of(raw("iceberg.rest.security.type", "OAuth2",
                 "iceberg.rest.oauth2.token", "t")).validate();
+        IcebergRestMetaStoreProperties.of(raw("iceberg.rest.security.type", "Google")).validate();
+        IcebergRestMetaStoreProperties.of(raw("iceberg.rest.security.type", "GOOGLE")).validate();
+    }
+
+    @Test
+    public void googleSecurityTypeAcceptsOptionalGoogleKeys() {
+        IcebergRestMetaStoreProperties.of(raw("iceberg.rest.security.type", "google",
+                "iceberg.rest.io-impl", "org.apache.iceberg.gcp.gcs.GCSFileIO",
+                "iceberg.rest.google.user-project", "my-billing-project",
+                "iceberg.gcs.oauth2.token", "my-gcs-token")).validate();
     }
 
     @Test
@@ -152,7 +162,7 @@ public class IcebergRestMetaStorePropertiesTest {
         // WHY: rule 1 (security type) runs first. Even with a role_arn (rule 5) and an AK-only (rule 10)
         // also violated, the security-type error must surface. MUTATION: reordering checks would surface a
         // different message.
-        Assertions.assertEquals("Invalid security type: bogus. Supported values are: none, oauth2",
+        Assertions.assertEquals("Invalid security type: bogus. Supported values are: none, oauth2, google",
                 validateError(raw("iceberg.rest.security.type", "bogus",
                         "iceberg.rest.role_arn", "arn", "iceberg.rest.access-key-id", "ak")));
     }

@@ -445,6 +445,47 @@ public class IcebergCatalogFactoryTest {
     }
 
     @Test
+    public void appendRestGoogleEmitsAuthManagerAndOptionalGcsKeys() {
+        // WHY: security.type=google must wire the GoogleAuthManager (rest.auth.type) and emit the GCS FileIO
+        // keys (io-impl, header.x-goog-user-project, gcs.oauth2.token). MUTATION: wrong key/value or dropping
+        // any optional key -> red.
+        Map<String, String> opts = new HashMap<>();
+        appendRest(opts,
+                props("iceberg.rest.security.type", "google",
+                        "iceberg.rest.io-impl", "org.apache.iceberg.gcp.gcs.GCSFileIO",
+                        "iceberg.rest.google.user-project", "my-billing-project",
+                        "iceberg.gcs.oauth2.token", "my-gcs-token"), Optional.empty());
+        Assertions.assertEquals("org.apache.iceberg.gcp.auth.GoogleAuthManager", opts.get("rest.auth.type"));
+        Assertions.assertEquals("org.apache.iceberg.gcp.gcs.GCSFileIO", opts.get("io-impl"));
+        Assertions.assertEquals("my-billing-project", opts.get("header.x-goog-user-project"));
+        Assertions.assertEquals("my-gcs-token", opts.get("gcs.oauth2.token"));
+        // no oauth2 leak
+        Assertions.assertNull(opts.get("credential"));
+        Assertions.assertNull(opts.get("token"));
+    }
+
+    @Test
+    public void appendRestGoogleOmitsBlankOptionalKeys() {
+        // WHY: only explicitly-set google keys are emitted; a bare security.type=google emits just the
+        // auth manager. MUTATION: emitting blank values for unset io-impl/user-project/token -> red.
+        Map<String, String> opts = new HashMap<>();
+        appendRest(opts, props("iceberg.rest.security.type", "google"), Optional.empty());
+        Assertions.assertEquals("org.apache.iceberg.gcp.auth.GoogleAuthManager", opts.get("rest.auth.type"));
+        Assertions.assertNull(opts.get("io-impl"));
+        Assertions.assertNull(opts.get("header.x-goog-user-project"));
+        Assertions.assertNull(opts.get("gcs.oauth2.token"));
+    }
+
+    @Test
+    public void appendRestGoogleDoesNotFireForNone() {
+        // WHY: security.type defaults to none, so neither oauth2 nor google blocks may fire. MUTATION:
+        // emitting the google auth manager for a none-type catalog -> red.
+        Map<String, String> opts = new HashMap<>();
+        appendRest(opts, props(), Optional.empty());
+        Assertions.assertNull(opts.get("rest.auth.type"));
+    }
+
+    @Test
     public void appendRestSigningBlockEmitsSigningKeysAndS3ExplicitCredentials() {
         // WHY: when signing-name is set, legacy emits rest.signing-name/sigv4-enabled/signing-region; for
         // managed signing names get credentials from the chosen S3 store, EXPLICIT (static AK/SK) -> rest.* creds

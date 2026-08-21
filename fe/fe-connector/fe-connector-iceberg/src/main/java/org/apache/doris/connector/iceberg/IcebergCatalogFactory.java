@@ -108,7 +108,12 @@ public final class IcebergCatalogFactory {
     private static final String REST_SIGNING_NAME_KEY = "rest.signing-name";
     private static final String REST_SIGV4_ENABLED_KEY = "rest.sigv4-enabled";
     private static final String REST_SIGNING_REGION_KEY = "rest.signing-region";
+    private static final String REST_AUTH_TYPE_KEY = "rest.auth.type";
     private static final String SECURITY_TYPE_OAUTH2 = "oauth2";
+    private static final String SECURITY_TYPE_GOOGLE = "google";
+    private static final String GOOGLE_AUTH_MANAGER_IMPL =
+            "org.apache.iceberg.gcp.auth.GoogleAuthManager";
+    private static final String GCS_OAUTH2_TOKEN_KEY = "gcs.oauth2.token";
 
     // GLUE.
     private static final String GLUE_CREDENTIALS_PROVIDER_KEY = "client.credentials-provider";
@@ -504,9 +509,14 @@ public final class IcebergCatalogFactory {
     }
 
     private static void appendRestOAuth2Properties(Map<String, String> opts, IcebergRestMetaStoreProperties rest) {
-        if (!SECURITY_TYPE_OAUTH2.equalsIgnoreCase(rest.getSecurityType())) {
-            return;
+        if (SECURITY_TYPE_OAUTH2.equalsIgnoreCase(rest.getSecurityType())) {
+            appendRestOAuth2Auth(opts, rest);
+        } else if (SECURITY_TYPE_GOOGLE.equalsIgnoreCase(rest.getSecurityType())) {
+            appendRestGoogleAuth(opts, rest);
         }
+    }
+
+    private static void appendRestOAuth2Auth(Map<String, String> opts, IcebergRestMetaStoreProperties rest) {
         String credential = rest.getOauth2Credential();
         if (StringUtils.isNotBlank(credential)) {
             // Client Credentials Flow.
@@ -521,6 +531,17 @@ public final class IcebergCatalogFactory {
             // Pre-configured Token Flow (validation guarantees a token here when credential is absent).
             opts.put(OAuth2Properties.TOKEN, nullToEmpty(rest.getOauth2Token()));
         }
+    }
+
+    /**
+     * Google security type: authenticates the REST catalog with Iceberg's built-in GoogleAuthManager (Application
+     * Default Credentials) and emits the GCS FileIO keys for GCS storage access.
+     */
+    private static void appendRestGoogleAuth(Map<String, String> opts, IcebergRestMetaStoreProperties rest) {
+        opts.put(REST_AUTH_TYPE_KEY, GOOGLE_AUTH_MANAGER_IMPL);
+        putIfNotBlank(opts, CatalogProperties.FILE_IO_IMPL, rest.getIoImpl());
+        putIfNotBlank(opts, "header.x-goog-user-project", rest.getGoogleUserProject());
+        putIfNotBlank(opts, GCS_OAUTH2_TOKEN_KEY, rest.getGcsOauth2Token());
     }
 
     private static void appendRestSigningProperties(Map<String, String> opts, IcebergRestMetaStoreProperties rest,
