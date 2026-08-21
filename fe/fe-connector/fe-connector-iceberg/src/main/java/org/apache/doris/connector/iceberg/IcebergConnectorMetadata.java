@@ -916,14 +916,14 @@ public class IcebergConnectorMetadata implements ConnectorMetadata {
     // ========== DDL writes (B1): create/drop database + table ==========
 
     /**
-     * Creates an iceberg namespace, mirroring legacy {@code IcebergMetadataOps.performCreateDb}. Namespace
-     * properties are only honored by an HMS catalog; for every other flavor a non-empty property map fails
-     * loud (legacy parity) — the gate is a pure local check run BEFORE the auth context, like paimon.
-     * Existence / IF NOT EXISTS is resolved upstream by {@code PluginDrivenExternalCatalog.createDb}.
+     * Creates an iceberg namespace. Namespace properties are honored by an HMS catalog and a REST catalog; for
+     * every other flavor a non-empty property map fails loud — the gate is a pure local check run BEFORE the
+     * auth context, like paimon. Existence / IF NOT EXISTS is resolved upstream by
+     * {@code PluginDrivenExternalCatalog.createDb}.
      */
     @Override
     public void createDatabase(ConnectorSession session, String dbName, Map<String, String> properties) {
-        if (!properties.isEmpty() && !isHmsCatalog()) {
+        if (!properties.isEmpty() && !isHmsCatalog() && !isRestCatalog()) {
             throw new DorisConnectorException(
                     "Not supported: create database with properties for iceberg catalog type: " + catalogType());
         }
@@ -1702,6 +1702,11 @@ public class IcebergConnectorMetadata implements ConnectorMetadata {
     /** Whether this is an HMS-backed iceberg catalog (matching the read-path fork). */
     private boolean isHmsCatalog() {
         return IcebergCatalogProperties.TYPE_HMS.equals(catalogType());
+    }
+
+    /** Whether this is a REST-backed iceberg catalog. */
+    private boolean isRestCatalog() {
+        return IcebergCatalogProperties.TYPE_REST.equals(catalogType());
     }
 
     // ========== E7: System Tables (P6.5) ==========

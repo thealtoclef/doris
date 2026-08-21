@@ -78,13 +78,25 @@ public class IcebergConnectorMetadataDdlTest {
     public void testCreateDatabaseNonHmsWithPropertiesFailsLoud() {
         RecordingIcebergCatalogOps ops = new RecordingIcebergCatalogOps();
         RecordingConnectorContext ctx = new RecordingConnectorContext();
-        IcebergConnectorMetadata md = metadata(ops, ctx, IcebergCatalogProperties.TYPE_REST);
+        IcebergConnectorMetadata md = metadata(ops, ctx, IcebergCatalogProperties.TYPE_HADOOP);
         DorisConnectorException ex = Assertions.assertThrows(DorisConnectorException.class,
                 () -> md.createDatabase(null, "db1", Collections.singletonMap("k", "v")));
-        Assertions.assertTrue(ex.getMessage().contains("rest"));
+        Assertions.assertTrue(ex.getMessage().contains("hadoop"));
         // The gate runs BEFORE the auth context — the seam must not be touched.
         Assertions.assertTrue(ops.log.isEmpty(), ops.log.toString());
         Assertions.assertEquals(0, ctx.authCount);
+    }
+
+    @Test
+    public void testCreateDatabaseRestWithPropertiesSucceeds() {
+        RecordingIcebergCatalogOps ops = new RecordingIcebergCatalogOps();
+        RecordingConnectorContext ctx = new RecordingConnectorContext();
+        Map<String, String> dbProps = Collections.singletonMap("location", "s3://wh/db");
+        metadata(ops, ctx, IcebergCatalogProperties.TYPE_REST)
+                .createDatabase(null, "db1", dbProps);
+        Assertions.assertEquals("db1", ops.lastCreateDb);
+        Assertions.assertEquals(dbProps, ops.lastCreateDbProps);
+        Assertions.assertEquals(1, ctx.authCount);
     }
 
     @Test
