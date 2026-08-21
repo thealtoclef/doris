@@ -152,6 +152,35 @@ public class CatalogBackedIcebergCatalogOpsDdlTest {
     }
 
     @Test
+    public void testCreateTableWithCustomLocation() {
+        ops.createDatabase("db1", Collections.emptyMap());
+        Map<String, String> props = IcebergSchemaBuilder.buildTableProperties(Collections.emptyMap());
+        props.put("location", "s3://custom/db1/t1");
+
+        ops.createTable("db1", "t1", schema(), PartitionSpec.unpartitioned(), null, props);
+
+        // The custom location is applied as the table root, not stored as a table property.
+        Assertions.assertEquals("s3://custom/db1/t1", ops.loadTable("db1", "t1").location());
+        Assertions.assertNull(ops.loadTable("db1", "t1").properties().get("location"));
+    }
+
+    @Test
+    public void testCreateTableWithCustomLocationAndSortOrder() {
+        ops.createDatabase("db1", Collections.emptyMap());
+        Schema schema = schema();
+        SortOrder sortOrder = IcebergSchemaBuilder.buildSortOrder(
+                Collections.singletonList(new ConnectorSortField("id", true, true)), schema);
+        Map<String, String> props = IcebergSchemaBuilder.buildTableProperties(Collections.emptyMap());
+        props.put("location", "s3://custom/db1/t1");
+
+        ops.createTable("db1", "t1", schema, PartitionSpec.unpartitioned(), sortOrder, props);
+
+        Assertions.assertEquals("s3://custom/db1/t1", ops.loadTable("db1", "t1").location());
+        Assertions.assertNull(ops.loadTable("db1", "t1").properties().get("location"));
+        Assertions.assertFalse(ops.loadTable("db1", "t1").sortOrder().isUnsorted());
+    }
+
+    @Test
     public void testCreateTablePartitioned() {
         ops.createDatabase("db1", Collections.emptyMap());
         Schema schema = schema();

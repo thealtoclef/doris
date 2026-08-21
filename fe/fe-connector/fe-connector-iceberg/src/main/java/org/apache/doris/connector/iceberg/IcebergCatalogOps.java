@@ -256,6 +256,8 @@ public interface IcebergCatalogOps {
 
         // The iceberg namespace-metadata key carrying the database location (legacy NAMESPACE_LOCATION_PROP).
         private static final String NAMESPACE_LOCATION_PROP = "location";
+        // The CREATE TABLE property key carrying a user-specified table root location.
+        private static final String LOCATION_PROP = "location";
 
         private final Catalog catalog;
         // Explicit view catalog for the session-aware (iceberg.rest.session=user) path: a per-request
@@ -442,14 +444,33 @@ public interface IcebergCatalogOps {
         public void createTable(String dbName, String tableName, Schema schema, PartitionSpec partitionSpec,
                 SortOrder sortOrder, Map<String, String> properties) {
             TableIdentifier id = toTableIdentifier(dbName, tableName);
-            // Mirror legacy IcebergMetadataOps.performCreateTable: the buildTable path is only needed to
-            // attach a sort order; otherwise the plain createTable overload is used.
+            // A custom table root location arrives as the "location" property. Iceberg accepts it only as a
+            // dedicated builder parameter (withLocation), not as a table property, so extract it and route it
+            // through the builder. The key is removed from the properties map so it is not stored as a table
+            // property. The buildTable path is used whenever a sort order or a custom location must be attached;
+            // otherwise the plain createTable overload is used.
+            String location = properties.remove(LOCATION_PROP);
             Table table;
             if (sortOrder != null && !sortOrder.isUnsorted()) {
+                if (location != null) {
+                    table = catalog.buildTable(id, schema)
+                            .withPartitionSpec(partitionSpec)
+                            .withProperties(properties)
+                            .withLocation(location)
+                            .withSortOrder(sortOrder)
+                            .create();
+                } else {
+                    table = catalog.buildTable(id, schema)
+                            .withPartitionSpec(partitionSpec)
+                            .withProperties(properties)
+                            .withSortOrder(sortOrder)
+                            .create();
+                }
+            } else if (location != null) {
                 table = catalog.buildTable(id, schema)
                         .withPartitionSpec(partitionSpec)
+                        .withLocation(location)
                         .withProperties(properties)
-                        .withSortOrder(sortOrder)
                         .create();
             } else {
                 table = catalog.createTable(id, schema, partitionSpec, properties);
