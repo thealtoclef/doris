@@ -1,0 +1,81 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+# Single-node Doris cluster built from source (1 FE + 1 BE).
+#
+# Each service builds directly from its source-build Dockerfile, so no
+# image needs to be built beforehand. The build context is the repo root
+# (the Dockerfiles COPY the whole source tree), i.e. run compose from
+# anywhere; both Dockerfiles resolve via the context path:
+#   docker compose -f docker/source-build/docker-compose.yaml up -d --build
+#
+# Connect via MySQL (default no password for root):
+#   mysql -h127.0.0.1 -P9030 -uroot
+services:
+  fe:
+    build:
+      context: ../..
+      dockerfile: docker/source-build/fe/Dockerfile
+    image: local/doris:fe-source-build
+    container_name: doris-fe
+    hostname: fe
+    environment:
+      - FE_SERVERS=fe1:172.19.0.10:9010
+      - FE_ID=1
+    ports:
+      - "8030:8030"
+      - "9030:9030"
+    volumes:
+      - fe-meta:/opt/apache-doris/fe/doris-meta
+      - fe-log:/opt/apache-doris/fe/log
+    networks:
+      doris_net:
+        ipv4_address: 172.19.0.10
+    restart: unless-stopped
+  be:
+    build:
+      context: ../..
+      dockerfile: docker/source-build/be/Dockerfile
+    image: local/doris:be-source-build
+    container_name: doris-be
+    hostname: be
+    depends_on:
+      - fe
+    environment:
+      - FE_SERVERS=fe1:172.19.0.10:9010
+      - BE_ADDR=172.19.0.11:9050
+    ports:
+      - "8040:8040"
+    volumes:
+      - be-storage:/opt/apache-doris/be/storage
+      - be-log:/opt/apache-doris/be/log
+    networks:
+      doris_net:
+        ipv4_address: 172.19.0.11
+    restart: unless-stopped
+
+volumes:
+  fe-meta:
+  fe-log:
+  be-storage:
+  be-log:
+
+networks:
+  doris_net:
+    ipam:
+      config:
+        - subnet: 172.19.0.0/16

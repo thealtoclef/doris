@@ -1,7 +1,12 @@
-be*
-fs_brokers*
-thirdparty*
-fe*
 .git*
-fs_brokers*
 
+# Build outputs regenerated inside the builder stage (build.sh / Maven / npm).
+# Keeping them out keeps the source-build context small.
+log
+ut_dir
+be/build_*
+be/ut_build_*
+contrib/*/build
+**/target
+**/output
+**/node_modules
