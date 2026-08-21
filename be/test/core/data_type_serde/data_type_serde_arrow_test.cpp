@@ -72,6 +72,8 @@
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_struct.h"
 #include "core/data_type/data_type_timestamptz.h"
+#include "core/data_type/data_type_variant.h"
+#include "core/data_type/data_type_variant_v2.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/field.h"
 #include "core/types.h"
@@ -753,4 +755,29 @@ TEST(DataTypeSerDeArrowTest, ReadAwareArrowTimestampHonorsDeclaredTimezone) {
 
 // VARIANT columns load from Arrow STRING values whose bytes are JSON documents. This exercises the
 // DataTypeVariantSerDe::read_column_from_arrow path via the shared block converter.
+} // namespace doris
+
+// VARIANT columns load from Arrow STRING values whose bytes are JSON documents. This exercises the
+// DataTypeVariantSerDe::read_column_from_arrow path via the shared block converter.
+TEST(DataTypeSerDeArrowTest, ReadVariantFromArrowString) {
+    auto schema = arrow::schema({arrow::field("v", arrow::utf8(), false)});
+    arrow::StringBuilder builder;
+    ASSERT_TRUE(builder.Append("{\"a\": 1, \"b\": [true, 2]}").ok());
+    ASSERT_TRUE(builder.Append("{\"c\": \"hello\"}").ok());
+    ASSERT_TRUE(builder.AppendNull().ok());
+    std::shared_ptr<arrow::Array> array;
+    ASSERT_TRUE(builder.Finish(&array).ok());
+    auto record_batch = arrow::RecordBatch::Make(schema, array->length(), {array});
+
+    auto variant_type = std::make_shared<DataTypeVariant>();
+    auto block = std::make_shared<Block>();
+    block->insert(ColumnWithTypeAndName(variant_type->create_column(), variant_type, "v"));
+    CommonDataTypeSerdeTest::deserialize_arrow(block, record_batch);
+    ASSERT_EQ(block->rows(), 3);
+    // V1 serialization sorts object keys and renders booleans as 1/0. The array and scalar values
+    // round-trip; the Arrow null row is preserved as a row with no visible value.
+    EXPECT_EQ(block->get_by_position(0).to_string(0), "{\"a\":1,\"b\":[1, 2]}");
+    EXPECT_EQ(block->get_by_position(0).to_string(1), "{\"c\":\"hello\"}");
+}
+
 } // namespace doris

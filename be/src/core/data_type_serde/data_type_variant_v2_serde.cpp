@@ -17,17 +17,24 @@
 
 #include "core/data_type_serde/data_type_variant_v2_serde.h"
 
+#include <arrow/array/array_binary.h>
+#include <arrow/array/array_primitive.h>
 #include <arrow/array/builder_binary.h>
+#include <arrow/array/builder_primitive.h>
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <orc/Vector.hh>
 #include <span>
+#include <string>
 #include <utility>
 
 #include "common/cast_set.h"
 #include "common/exception.h"
+#include "common/status.h"
 #include "core/arena.h"
 #include "core/assert_cast.h"
 #include "core/column/column_const.h"
@@ -39,6 +46,7 @@
 #include "core/data_type/data_type_factory.hpp"
 #include "core/data_type/data_type_nullable.h"
 #include "core/data_type/data_type_string.h"
+#include "core/data_type_serde/arrow_validation.h"
 #include "core/data_type_serde/data_type_string_serde.h"
 #include "core/types.h"
 #include "core/value/jsonb_value.h"
@@ -182,6 +190,71 @@ void preflight_json(const IColumn& column, size_t start, size_t end,
             });
 }
 
+// Fill a Variant V2 column from an Arrow string/binary array whose values are JSON documents.
+// Each value is parsed into a Variant value (empty string becomes an empty object, matching the
+// JSON text import path). Arrow null entries become Variant nulls. All rows flow through one
+// encoder so the destination row order matches the source, including interleaved nulls.
+// A row that fails to parse is rejected (mirroring the JSON text import path) unless
+// variant_throw_exeception_on_invalid_json is off, in which case it becomes a null.
+Status read_variant_v2_from_arrow_string(IColumn& column, const arrow::Array* arrow_array,
+                                         int64_t start, int64_t end) {
+    if (start < 0 || end < start || end > arrow_array->length()) {
+        return Status::InvalidArgument(
+                "Variant Arrow read range is invalid: start={}, end={}, "
+                "length={}",
+                start, end, arrow_array->length());
+    }
+    auto* variants = check_and_get_column<ColumnVariantV2>(column);
+    if (variants == nullptr) {
+        return Status::InvalidArgument(
+                "Variant V2 SerDe read_column_from_arrow requires ColumnVariantV2, got {}",
+                column.get_name());
+    }
+    const StringRef null_json("null", 4);
+    JsonStringToVariantEncoder encoder(JsonToVariantOptions::current_config());
+    for (int64_t row = start; row < end; ++row) {
+        if (arrow_array->IsNull(row)) {
+            encoder.add_json(null_json);
+            continue;
+        }
+        StringRef json;
+        switch (arrow_array->type_id()) {
+        case arrow::Type::STRING:
+        case arrow::Type::BINARY: {
+            const auto* concrete = dynamic_cast<const arrow::BinaryArray*>(arrow_array);
+            const std::string_view raw = concrete->GetView(row);
+            json = {raw.data(), raw.size()};
+            break;
+        }
+        case arrow::Type::LARGE_STRING:
+        case arrow::Type::LARGE_BINARY: {
+            const auto* concrete = dynamic_cast<const arrow::LargeBinaryArray*>(arrow_array);
+            const std::string_view raw = concrete->GetView(row);
+            json = {raw.data(), raw.size()};
+            break;
+        }
+        default:
+            return Status::InvalidArgument("Unsupported arrow type for variant column: {}",
+                                           arrow_array->type()->name());
+        }
+        const Status parse_status = encoder.try_add_json(json);
+        if (!parse_status.ok()) {
+            if (config::variant_throw_exeception_on_invalid_json) {
+                return Status::InvalidArgument("Parse json document failed at row {}, error: {}",
+                                               row, parse_status.to_string());
+            }
+            encoder.add_json(null_json);
+        }
+    }
+    VariantBatchBuilder batch = encoder.finish_batch();
+    if (batch.num_rows() != static_cast<size_t>(end - start)) {
+        return Status::InternalError("Variant Arrow decode row count mismatch: expected {}, got {}",
+                                     end - start, batch.num_rows());
+    }
+    variants->insert_encoded_batch(batch);
+    return Status::OK();
+}
+
 } // namespace
 
 DataTypeVariantV2SerDe::DataTypeVariantV2SerDe(int nesting_level) : DataTypeSerDe(nesting_level) {}
@@ -320,10 +393,23 @@ Status DataTypeVariantV2SerDe::read_column_from_pb(IColumn& column, const PValue
     return Status::NotSupported("read_column_from_pb with type " + column.get_name());
 }
 
-Status DataTypeVariantV2SerDe::read_column_from_arrow(IColumn& column, const arrow::Array*, int64_t,
-                                                      int64_t, const cctz::time_zone&) const {
-    return Status::Error(ErrorCode::NOT_IMPLEMENTED_ERROR,
-                         "read_column_from_arrow with type " + column.get_name());
+Status DataTypeVariantV2SerDe::read_column_from_arrow(IColumn& column,
+                                                      const arrow::Array* arrow_array,
+                                                      int64_t start, int64_t end,
+                                                      const cctz::time_zone& ctz) const {
+    if (arrow_array == nullptr) {
+        return Status::InvalidArgument("Variant Arrow array is null");
+    }
+    switch (arrow_array->type_id()) {
+    case arrow::Type::STRING:
+    case arrow::Type::BINARY:
+    case arrow::Type::LARGE_STRING:
+    case arrow::Type::LARGE_BINARY:
+        return read_variant_v2_from_arrow_string(column, arrow_array, start, end);
+    default:
+        return Status::InvalidArgument("Unsupported arrow type for variant column: {}",
+                                       arrow_array->type()->name());
+    }
 }
 
 namespace {

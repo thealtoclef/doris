@@ -17,10 +17,12 @@
 
 #include "core/data_type_serde/data_type_variant_serde.h"
 
+#include <arrow/array/array_binary.h>
 #include <arrow/array/builder_binary.h>
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include "common/cast_set.h"
 #include "common/config.h"
@@ -29,6 +31,7 @@
 #include "core/assert_cast.h"
 #include "core/column/column.h"
 #include "core/column/column_variant.h"
+#include "core/data_type_serde/arrow_validation.h"
 #include "core/data_type_serde/data_type_serde.h"
 #include "core/field.h"
 #include "core/string_ref.h"
@@ -140,6 +143,51 @@ Status DataTypeVariantSerDe::deserialize_one_cell_from_json(IColumn& column, Sli
     StringRef json_ref(slice.data, slice.size);
     RETURN_IF_CATCH_EXCEPTION(
             variant_util::parse_json_to_variant(column, json_ref, nullptr, parse_config));
+    return Status::OK();
+}
+
+Status DataTypeVariantSerDe::read_column_from_arrow(IColumn& column,
+                                                    const arrow::Array* arrow_array, int64_t start,
+                                                    int64_t end, const cctz::time_zone& ctz) const {
+    if (arrow_array == nullptr) {
+        return Status::InvalidArgument("Variant Arrow array is null");
+    }
+    if (start < 0 || end < start || end > arrow_array->length()) {
+        return Status::InvalidArgument(
+                "Variant Arrow read range is invalid: start={}, end={}, "
+                "length={}",
+                start, end, arrow_array->length());
+    }
+    const auto type_id = arrow_array->type_id();
+    if (type_id != arrow::Type::STRING && type_id != arrow::Type::BINARY &&
+        type_id != arrow::Type::LARGE_STRING && type_id != arrow::Type::LARGE_BINARY) {
+        return Status::InvalidArgument("Unsupported arrow type for variant column: {}",
+                                       arrow_array->type()->name());
+    }
+    const arrow::BinaryArray* concrete = nullptr;
+    const arrow::LargeBinaryArray* concrete_large = nullptr;
+    if (type_id == arrow::Type::STRING || type_id == arrow::Type::BINARY) {
+        concrete = dynamic_cast<const arrow::BinaryArray*>(arrow_array);
+    } else {
+        concrete_large = dynamic_cast<const arrow::LargeBinaryArray*>(arrow_array);
+    }
+    ParseConfig parse_config;
+    parse_config.check_duplicate_json_path = config::variant_enable_duplicate_json_path_check;
+    static constexpr std::string_view JSON_NULL = "null";
+    for (int64_t row = start; row < end; ++row) {
+        StringRef json_ref;
+        if (arrow_array->IsNull(row)) {
+            json_ref = {JSON_NULL.data(), JSON_NULL.size()};
+        } else if (concrete != nullptr) {
+            const std::string_view raw = concrete->GetView(row);
+            json_ref = {raw.data(), raw.size()};
+        } else {
+            const std::string_view raw = concrete_large->GetView(row);
+            json_ref = {raw.data(), raw.size()};
+        }
+        variant_util::parse_json_to_variant(column, json_ref, nullptr, parse_config);
+    }
+    column.finalize();
     return Status::OK();
 }
 
