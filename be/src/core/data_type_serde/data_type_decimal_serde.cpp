@@ -18,12 +18,14 @@
 #include "core/data_type_serde/data_type_decimal_serde.h"
 
 #include <arrow/array/array_base.h>
+#include <arrow/array/array_binary.h>
 #include <arrow/array/array_decimal.h>
 #include <arrow/builder.h>
 #include <arrow/util/decimal.h>
 
 #include <algorithm>
 #include <limits>
+#include <string_view>
 #include <type_traits>
 
 #include "arrow/type.h"
@@ -305,6 +307,64 @@ Status read_decimal_decoded_values(IColumn& column, const DecodedColumnView& vie
             return st;
         }
         data.push_back(value);
+    }
+    return Status::OK();
+}
+
+// Read an Arrow STRING/BINARY/LARGE_STRING/LARGE_BINARY array whose values are decimal text into
+// a decimal column. Several Arrow producers (e.g. RisingWave) emit DECIMAL as Utf8 strings — the
+// same textual form Doris's JSON loading accepts — so parsing here keeps the Arrow contract
+// consistent with the JSON convention instead of rejecting the payload.
+template <PrimitiveType T>
+Status read_decimal_from_arrow_string(const arrow::Array* arrow_array, int64_t start, int64_t end,
+                                      UInt32 precision, UInt32 scale,
+                                      typename ColumnDecimal<T>::Container& column_data) {
+    using FieldType = typename PrimitiveTypeTraits<T>::CppType;
+    const auto type_id = arrow_array->type_id();
+    CastParameters params;
+    params.is_strict = false;
+    if (config::enable_arrow_input_validation) {
+        switch (type_id) {
+        case arrow::Type::STRING:
+        case arrow::Type::BINARY:
+            check_arrow_binary_offsets_buffer(
+                    *static_cast<const arrow::BinaryArray*>(arrow_array));
+            break;
+        case arrow::Type::LARGE_STRING:
+        case arrow::Type::LARGE_BINARY:
+            check_arrow_binary_offsets_buffer(
+                    *static_cast<const arrow::LargeBinaryArray*>(arrow_array));
+            break;
+        default:
+            break;
+        }
+    }
+    for (int64_t row = start; row < end; ++row) {
+        if (arrow_array->IsNull(row)) {
+            column_data.push_back(FieldType());
+            continue;
+        }
+        std::string_view raw;
+        switch (type_id) {
+        case arrow::Type::STRING:
+        case arrow::Type::BINARY:
+            raw = static_cast<const arrow::BinaryArray*>(arrow_array)->GetView(row);
+            break;
+        case arrow::Type::LARGE_STRING:
+        case arrow::Type::LARGE_BINARY:
+            raw = static_cast<const arrow::LargeBinaryArray*>(arrow_array)->GetView(row);
+            break;
+        default:
+            return Status::InvalidArgument("Unsupported arrow type {} for decimal column",
+                                           arrow_array->type()->name());
+        }
+        FieldType parsed;
+        if (!CastToDecimal::from_string(StringRef(raw.data(), raw.size()), parsed, precision,
+                                        scale, params)) {
+            return Status::InvalidArgument("parse decimal fail, string: '{}' at row {}",
+                                           std::string(raw.data(), raw.size()), row);
+        }
+        column_data.push_back(parsed);
     }
     return Status::OK();
 }
@@ -922,55 +982,93 @@ Status DataTypeDecimalSerDe<T>::read_column_from_arrow(IColumn& column,
                                                        const arrow::Array* arrow_array,
                                                        int64_t start, int64_t end,
                                                        const cctz::time_zone& ctz) const {
-    if (config::enable_arrow_input_validation) {
-        check_arrow_no_offset(*arrow_array);
+    if (arrow_array == nullptr) {
+        return Status::InvalidArgument("Arrow array is null for column {}", column.get_name());
     }
+    if (config::enable_arrow_input_validation) {
+        check_arrow_array_range(*arrow_array, start, end);
+    }
+    const auto type_id = arrow_array->type_id();
+
+    // DECIMAL-as-string matches Doris's JSON loading convention and is what several Arrow
+    // producers (e.g. RisingWave) emit. Accept it alongside the native Arrow decimal types.
+    if (type_id == arrow::Type::STRING || type_id == arrow::Type::BINARY ||
+        type_id == arrow::Type::LARGE_STRING || type_id == arrow::Type::LARGE_BINARY) {
+        return read_decimal_from_arrow_string<T>(
+                arrow_array, start, end, static_cast<UInt32>(precision),
+                static_cast<UInt32>(scale), static_cast<ColumnDecimal<T>&>(column).get_data());
+    }
+
     auto& column_data = static_cast<ColumnDecimal<T>&>(column).get_data();
-    // Decimal<Int128> for decimalv2
-    // Decimal<Int128I> for deicmalv3
-    if constexpr (T == TYPE_DECIMALV2) {
-        const auto* concrete_array = dynamic_cast<const arrow::DecimalArray*>(arrow_array);
-        const auto* arrow_decimal_type =
-                static_cast<const arrow::DecimalType*>(arrow_array->type().get());
-        const auto arrow_scale = arrow_decimal_type->scale();
-        // TODO check precision
-        for (auto value_i = start; value_i < end; ++value_i) {
-            auto value = unaligned_load<Decimal128V2>(concrete_array->Value(value_i));
-            // convert scale to 9;
-            if (9 > arrow_scale) {
-                using MaxNativeType = typename Decimal128V2::NativeType;
-                MaxNativeType converted_value = common::exp10_i128(9 - arrow_scale);
-                if (common::mul_overflow(static_cast<MaxNativeType>(value), converted_value,
-                                         converted_value)) {
-                    VLOG_DEBUG << "Decimal convert overflow";
-                    value = converted_value < 0
-                                    ? std::numeric_limits<typename Decimal128V2 ::NativeType>::min()
-                                    : std::numeric_limits<
-                                              typename Decimal128V2 ::NativeType>::max();
-                } else {
-                    value = converted_value;
-                }
-            } else if (9 < arrow_scale) {
-                value = value / common::exp10_i128(arrow_scale - 9);
-            }
-            column_data.emplace_back(value);
+    if constexpr (T == TYPE_DECIMAL256) {
+        if (type_id != arrow::Type::DECIMAL256) {
+            return Status::InvalidArgument(
+                    "Expected Arrow decimal256 or string array for decimal256 column {}, got {}",
+                    column.get_name(), arrow_array->type()->name());
         }
-    } else if constexpr (T == TYPE_DECIMAL32 || T == TYPE_DECIMAL64 || T == TYPE_DECIMAL128I) {
-        const auto* concrete_array = dynamic_cast<const arrow::DecimalArray*>(arrow_array);
-        for (auto value_i = start; value_i < end; ++value_i) {
-            const auto* value = concrete_array->Value(value_i);
-            auto decimal_value = unaligned_load<FieldType>(value);
-            column_data.emplace_back(decimal_value);
-        }
-    } else if constexpr (T == TYPE_DECIMAL256) {
         const auto* concrete_array = dynamic_cast<const arrow::Decimal256Array*>(arrow_array);
+        if (concrete_array == nullptr) {
+            return Status::InvalidArgument(
+                    "Failed to cast Arrow array of type {} to decimal256 for column {}",
+                    arrow_array->type()->name(), column.get_name());
+        }
+        if (config::enable_arrow_input_validation) {
+            check_arrow_fixed_width_buffer(*concrete_array, sizeof(arrow::Decimal256));
+        }
         for (auto value_i = start; value_i < end; ++value_i) {
             auto decimal_value = unaligned_load<FieldType>(concrete_array->Value(value_i));
             column_data.emplace_back(decimal_value);
         }
     } else {
-        return Status::Error(ErrorCode::NOT_IMPLEMENTED_ERROR,
-                             "read_column_from_arrow with type " + column.get_name());
+        if (type_id != arrow::Type::DECIMAL128) {
+            return Status::InvalidArgument(
+                    "Expected Arrow decimal or string array for decimal column {}, got {}",
+                    column.get_name(), arrow_array->type()->name());
+        }
+        const auto* concrete_array = dynamic_cast<const arrow::DecimalArray*>(arrow_array);
+        if (concrete_array == nullptr) {
+            return Status::InvalidArgument(
+                    "Failed to cast Arrow array of type {} to decimal for column {}",
+                    arrow_array->type()->name(), column.get_name());
+        }
+        if (config::enable_arrow_input_validation) {
+            check_arrow_fixed_width_buffer(*concrete_array, sizeof(arrow::Decimal128));
+        }
+        if constexpr (T == TYPE_DECIMALV2) {
+            // Decimal<Int128> for decimalv2
+            const auto* arrow_decimal_type =
+                    static_cast<const arrow::DecimalType*>(arrow_array->type().get());
+            const auto arrow_scale = arrow_decimal_type->scale();
+            // TODO check precision
+            for (auto value_i = start; value_i < end; ++value_i) {
+                auto value = unaligned_load<Decimal128V2>(concrete_array->Value(value_i));
+                // convert scale to 9;
+                if (9 > arrow_scale) {
+                    using MaxNativeType = typename Decimal128V2::NativeType;
+                    MaxNativeType converted_value = common::exp10_i128(9 - arrow_scale);
+                    if (common::mul_overflow(static_cast<MaxNativeType>(value), converted_value,
+                                             converted_value)) {
+                        VLOG_DEBUG << "Decimal convert overflow";
+                        value = converted_value < 0
+                                        ? std::numeric_limits<typename Decimal128V2 ::NativeType>::min()
+                                        : std::numeric_limits<
+                                                  typename Decimal128V2 ::NativeType>::max();
+                    } else {
+                        value = converted_value;
+                    }
+                } else if (9 < arrow_scale) {
+                    value = value / common::exp10_i128(arrow_scale - 9);
+                }
+                column_data.emplace_back(value);
+            }
+        } else {
+            // Decimal<Int32/Int64/Int128I> for decimalv3
+            for (auto value_i = start; value_i < end; ++value_i) {
+                const auto* value = concrete_array->Value(value_i);
+                auto decimal_value = unaligned_load<FieldType>(value);
+                column_data.emplace_back(decimal_value);
+            }
+        }
     }
     return Status::OK();
 }

@@ -412,6 +412,20 @@ public:
                   << std::endl;
     }
 
+    // Like deserialize_arrow, but returns the conversion Status so tests can assert on graceful
+    // rejection of wrong-typed Arrow input. Deserializes only the first column of the batch.
+    static Status deserialize_arrow_check(const std::shared_ptr<Block>& new_block,
+                                          std::shared_ptr<arrow::RecordBatch> record_batch) {
+        if (record_batch->num_columns() < 1) {
+            return Status::InternalError("empty record batch");
+        }
+        auto array = record_batch->column(0);
+        auto& column_with_type_and_name = new_block->get_by_position(0);
+        return arrow_column_to_doris_column(array.get(), 0, column_with_type_and_name.column,
+                                            column_with_type_and_name.type, record_batch->num_rows(),
+                                            "UTC");
+    }
+
     static void compare_two_blocks(const std::shared_ptr<Block>& frist_block,
                                    const std::shared_ptr<Block>& second_block) {
         for (size_t i = 0; i < frist_block->columns(); ++i) {
