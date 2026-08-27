@@ -45,7 +45,13 @@ rm -rf "${DORIS_HOME}/fe/fe-common/src/main/java/org/apache/doris/thrift ${DORIS
 rm -rf "${DORIS_HOME}/fe/fe-core/src/main/java/org/apache/doris/thrift ${DORIS_HOME}/fe/fe-core/src/main/java/org/apache/parquet"
 
 cp -r "build/gen_java/org/apache/doris/thrift" "${DORIS_HOME}/fe/fe-common/src/main/java/org/apache/doris"
-cp -r "build/gen_java/org/apache/parquet" "${DORIS_HOME}/fe/fe-common/src/main/java/org/apache/"
+# The org/apache/parquet generated java sources are only produced by the fe-common Maven
+# parquet codegen (main-era). On this branch nothing generates them, and the fe-core parquet
+# wrappers compile against the org.apache.parquet classes from the parquet-* jar dependencies.
+# Guard the copy so the build does not fail on a missing (unnecessary) directory.
+if [[ -d "build/gen_java/org/apache/parquet" ]]; then
+    cp -r "build/gen_java/org/apache/parquet" "${DORIS_HOME}/fe/fe-common/src/main/java/org/apache/"
+fi
 cd "${DORIS_HOME}/"
 echo "Done"
 exit 0

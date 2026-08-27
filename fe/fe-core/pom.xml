@@ -80,6 +80,31 @@ under the License.
                 <protoc.command>${doris.thirdparty}/installed/bin/protoc</protoc.command>
             </properties>
         </profile>
+        <!-- Backport of main's #66564: Huawei OBS support gated behind the `obs` Maven profile,
+             active by default, disabled via -Ddisable.obs=true (the build.sh exclude-obs-dependencies
+             flag). Without this, hadoop-huaweicloud is unconditionally resolved from the unreachable
+             repo.huaweicloud.com even when the flag is passed. -->
+        <profile>
+            <id>obs</id>
+            <activation>
+                <property>
+                    <name>!disable.obs</name>
+                </property>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>com.huaweicloud</groupId>
+                    <artifactId>hadoop-huaweicloud</artifactId>
+                </dependency>
+            </dependencies>
+            <repositories>
+                <!-- for huawei obs sdk -->
+                <repository>
+                    <id>huawei-obs-sdk</id>
+                    <url>https://repo.huaweicloud.com/repository/maven/huaweicloudsdk/</url>
+                </repository>
+            </repositories>
+        </profile>
     </profiles>
     <dependencies>
         <dependency>
@@ -306,10 +331,6 @@ under the License.
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-sts</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.huaweicloud</groupId>
-            <artifactId>hadoop-huaweicloud</artifactId>
         </dependency>
         <dependency>
             <groupId>com.qcloud.cos</groupId>
@@ -833,11 +854,6 @@ under the License.
             <id>central</id>
             <name>central maven repo https</name>
             <url>https://repo.maven.apache.org/maven2</url>
-        </repository>
-        <!-- for huawei obs sdk -->
-        <repository>
-            <id>huawei-obs-sdk</id>
-            <url>https://repo.huaweicloud.com/repository/maven/huaweicloudsdk/</url>
         </repository>
     </repositories>
     <build>
