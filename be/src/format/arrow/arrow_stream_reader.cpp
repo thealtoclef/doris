@@ -50,7 +50,15 @@ ArrowStreamReader::ArrowStreamReader(RuntimeState* state, RuntimeProfile* profil
           _file_slot_descs(file_slot_descs),
           _io_ctx(io_ctx),
           _file_reader(nullptr) {
-    TimezoneUtils::find_cctz_time_zone(TimezoneUtils::default_time_zone, _ctzz);
+    // Backport note: previously hardcoded to TimezoneUtils::default_time_zone, which decoded every
+    // timezone-aware Arrow timestamp at compile-time +08:00 and made timezone-naive ones shift by
+    // the same offset. Use the session timezone so a load honors the query's time_zone. Arrow
+    // timezone-naive timestamps still decode in UTC via the datetime v2 serde's UTC fallback.
+    if (_state != nullptr) {
+        _ctzz = _state->timezone_obj();
+    } else {
+        TimezoneUtils::find_cctz_time_zone(TimezoneUtils::default_time_zone, _ctzz);
+    }
 }
 
 ArrowStreamReader::~ArrowStreamReader() = default;

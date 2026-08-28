@@ -70,6 +70,7 @@
 #include "core/data_type/data_type_quantilestate.h"
 #include "core/data_type/data_type_string.h"
 #include "core/data_type/data_type_struct.h"
+#include "core/data_type/data_type_variant.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/field.h"
 #include "core/types.h"
@@ -81,6 +82,7 @@
 #include "format/arrow/arrow_row_batch.h"
 #include "runtime/descriptors.cpp"
 #include "util/string_parser.hpp"
+#include "util/timezone_utils.h"
 
 namespace doris {
 
@@ -635,6 +637,150 @@ TEST(DataTypeSerDeArrowTest, BlockConverterTest) {
     };
     block_converter_test(cols, 7, true);
     block_converter_test(cols, 7, false);
+}
+
+// A timezone-aware Arrow timestamp must decode in its declared zone, not the hardcoded +08:00
+// default, so a UTC instant declared as "+07:00" materializes as the +07:00 wall-clock value.
+TEST(DataTypeSerDeArrowTest, ReadAwareArrowTimestampHonorsDeclaredTimezone) {
+    // 1782975600 is 2026-07-02 07:00:00 UTC. Declared +07:00 => 14:00:00 local.
+    constexpr int64_t utc_instant_micros = 1782975600000000;
+    const auto schema = arrow::schema(
+            {arrow::field("ts", arrow::timestamp(arrow::TimeUnit::MICRO, "+07:00"), false)});
+    std::shared_ptr<arrow::Buffer> data = arrow::Buffer::FromString(std::string(
+            reinterpret_cast<const char*>(&utc_instant_micros), sizeof(utc_instant_micros)));
+    auto array = std::make_shared<arrow::TimestampArray>(arrow::ArrayData::Make(
+            arrow::timestamp(arrow::TimeUnit::MICRO, "+07:00"), 1, {nullptr, data}));
+    auto record_batch = arrow::RecordBatch::Make(schema, 1, {array});
+
+    auto ts_type = std::make_shared<DataTypeDateTimeV2>(6);
+    auto block = std::make_shared<Block>();
+    block->insert(ColumnWithTypeAndName(ts_type->create_column(), ts_type, "ts"));
+    CommonDataTypeSerdeTest::deserialize_arrow(block, record_batch);
+    // 14:00:00 local in the declared +07:00 zone (07:00 UTC + 7h). Scale-6 datetimev2 renders the
+    // fractional part even when it is zero.
+    EXPECT_EQ(block->get_by_position(0).to_string(0), "2026-07-02 14:00:00.000000");
+}
+
+// VARIANT columns load from Arrow STRING values whose bytes are JSON documents. This exercises the
+// DataTypeVariantSerDe::read_column_from_arrow path via the shared block converter.
+TEST(DataTypeSerDeArrowTest, ReadVariantFromArrowString) {
+    auto schema = arrow::schema({arrow::field("v", arrow::utf8(), false)});
+    arrow::StringBuilder builder;
+    ASSERT_TRUE(builder.Append("{\"a\": 1, \"b\": [true, 2]}").ok());
+    ASSERT_TRUE(builder.Append("{\"c\": \"hello\"}").ok());
+    ASSERT_TRUE(builder.AppendNull().ok());
+    std::shared_ptr<arrow::Array> array;
+    ASSERT_TRUE(builder.Finish(&array).ok());
+    auto record_batch = arrow::RecordBatch::Make(schema, array->length(), {array});
+
+    auto variant_type = std::make_shared<DataTypeVariant>();
+    auto block = std::make_shared<Block>();
+    block->insert(ColumnWithTypeAndName(variant_type->create_column(), variant_type, "v"));
+    CommonDataTypeSerdeTest::deserialize_arrow(block, record_batch);
+    ASSERT_EQ(block->rows(), 3);
+    // V1 serialization sorts object keys and renders booleans as 1/0. The array and scalar values
+    // round-trip; the Arrow null row is preserved as a row with no visible value.
+    EXPECT_EQ(block->get_by_position(0).to_string(0), "{\"a\":1,\"b\":[1, 2]}");
+    EXPECT_EQ(block->get_by_position(0).to_string(1), "{\"c\":\"hello\"}");
+}
+
+// DECIMAL columns accept Arrow STRING arrays whose values are decimal text — the same form Doris's
+// JSON loading accepts and what several Arrow producers (e.g. RisingWave) emit. Values parse with
+// the target precision/scale and Arrow nulls land as null rows.
+TEST(DataTypeSerDeArrowTest, ReadDecimalFromArrowString) {
+    auto schema = arrow::schema({arrow::field("d", arrow::utf8(), false)});
+    arrow::StringBuilder builder;
+    ASSERT_TRUE(builder.Append("1234567.56").ok());
+    ASSERT_TRUE(builder.Append("-1234567.56").ok());
+    ASSERT_TRUE(builder.AppendNull().ok());
+    ASSERT_TRUE(builder.Append("0.01").ok());
+    std::shared_ptr<arrow::Array> array;
+    ASSERT_TRUE(builder.Finish(&array).ok());
+    auto record_batch = arrow::RecordBatch::Make(schema, array->length(), {array});
+
+    for (PrimitiveType t : {TYPE_DECIMAL32, TYPE_DECIMAL64, TYPE_DECIMAL128I}) {
+        const int precision = t == TYPE_DECIMAL32 ? 9 : (t == TYPE_DECIMAL64 ? 18 : 27);
+        const int scale = t == TYPE_DECIMAL32 ? 2 : (t == TYPE_DECIMAL64 ? 6 : 9);
+        auto decimal_type = DataTypeFactory::instance().create_data_type(t, false, precision, scale);
+        auto block = std::make_shared<Block>();
+        block->insert(ColumnWithTypeAndName(decimal_type->create_column(), decimal_type, "d"));
+        CommonDataTypeSerdeTest::deserialize_arrow(block, record_batch);
+        ASSERT_EQ(block->rows(), 4);
+        EXPECT_EQ(block->get_by_position(0).to_string(0),
+                  t == TYPE_DECIMAL32 ? "1234567.56"
+                                      : (t == TYPE_DECIMAL64 ? "1234567.560000"
+                                                             : "1234567.560000000"));
+        EXPECT_EQ(block->get_by_position(0).to_string(1),
+                  t == TYPE_DECIMAL32 ? "-1234567.56"
+                                      : (t == TYPE_DECIMAL64 ? "-1234567.560000"
+                                                             : "-1234567.560000000"));
+        EXPECT_EQ(block->get_by_position(0).to_string(2),
+                  t == TYPE_DECIMAL32 ? "0.00" : (t == TYPE_DECIMAL64 ? "0.000000" : "0.000000000"));
+        EXPECT_EQ(block->get_by_position(0).to_string(3),
+                  t == TYPE_DECIMAL32 ? "0.01" : (t == TYPE_DECIMAL64 ? "0.010000" : "0.010000000"));
+    }
+}
+
+// DECIMAL256 columns accept the same Arrow STRING form, parsed at precision 76.
+TEST(DataTypeSerDeArrowTest, ReadDecimal256FromArrowString) {
+    auto schema = arrow::schema({arrow::field("d", arrow::utf8(), false)});
+    arrow::StringBuilder builder;
+    ASSERT_TRUE(builder.Append("12345678901234567890.1234567890").ok());
+    std::shared_ptr<arrow::Array> array;
+    ASSERT_TRUE(builder.Finish(&array).ok());
+    auto record_batch = arrow::RecordBatch::Make(schema, array->length(), {array});
+
+    auto decimal256_type = std::make_shared<DataTypeDecimal256>(76, 10);
+    auto block = std::make_shared<Block>();
+    block->insert(ColumnWithTypeAndName(decimal256_type->create_column(), decimal256_type, "d"));
+    CommonDataTypeSerdeTest::deserialize_arrow(block, record_batch);
+    ASSERT_EQ(block->rows(), 1);
+    EXPECT_EQ(block->get_by_position(0).to_string(0), "12345678901234567890.1234567890");
+}
+
+// A wrong-typed Arrow array for a DECIMAL target must be rejected with a graceful error, never a
+// crash. Regression for the BE segfault where a DECIMAL column fed a non-Decimal Arrow array did
+// dynamic_cast -> nullptr and dereferenced it. deserialize_arrow asserts Status::OK internally, so
+// call arrow_column_to_doris_column directly to inspect the returned status.
+TEST(DataTypeSerDeArrowTest, ReadDecimalFromArrowRejectsWrongType) {
+    // Int64 array into a DECIMAL128I column.
+    {
+        auto schema = arrow::schema({arrow::field("d", arrow::int64(), false)});
+        arrow::Int64Builder builder;
+        ASSERT_TRUE(builder.Append(123456).ok());
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_TRUE(builder.Finish(&array).ok());
+        auto record_batch = arrow::RecordBatch::Make(schema, array->length(), {array});
+
+        auto decimal_type = std::make_shared<DataTypeDecimal128>(27, 9);
+        auto block = std::make_shared<Block>();
+        block->insert(ColumnWithTypeAndName(decimal_type->create_column(), decimal_type, "d"));
+        auto column = block->get_by_position(0).column;
+        cctz::time_zone ctz;
+        TimezoneUtils::find_cctz_time_zone("UTC", ctz);
+        auto ret = arrow_column_to_doris_column(array.get(), 0, column, decimal_type,
+                                                array->length(), ctz);
+        EXPECT_FALSE(ret.ok());
+    }
+    // Decimal256 array into a DECIMAL128I column (width mismatch).
+    {
+        auto schema = arrow::schema({arrow::field("d", arrow::decimal256(76, 9), false)});
+        arrow::Decimal256Builder builder(arrow::decimal256(76, 9), arrow::default_memory_pool());
+        ASSERT_TRUE(builder.Append(arrow::Decimal256(1)).ok());
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_TRUE(builder.Finish(&array).ok());
+        auto record_batch = arrow::RecordBatch::Make(schema, array->length(), {array});
+
+        auto decimal_type = std::make_shared<DataTypeDecimal128>(27, 9);
+        auto block = std::make_shared<Block>();
+        block->insert(ColumnWithTypeAndName(decimal_type->create_column(), decimal_type, "d"));
+        auto column = block->get_by_position(0).column;
+        cctz::time_zone ctz;
+        TimezoneUtils::find_cctz_time_zone("UTC", ctz);
+        auto ret = arrow_column_to_doris_column(array.get(), 0, column, decimal_type,
+                                                array->length(), ctz);
+        EXPECT_FALSE(ret.ok());
+    }
 }
 
 } // namespace doris

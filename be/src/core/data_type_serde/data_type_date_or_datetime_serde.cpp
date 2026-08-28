@@ -27,6 +27,7 @@
 #include "core/value/vdatetime_value.h"
 #include "exprs/function/cast/cast_base.h"
 #include "exprs/function/cast/cast_to_date_or_datetime_impl.hpp"
+#include "util/timezone_utils.h"
 
 namespace doris {
 #include "common/compile_check_begin.h"
@@ -195,6 +196,21 @@ Status DataTypeDateSerDe<T>::_read_column_from_arrow(IColumn& column,
     auto& col_data = static_cast<ColumnVector<T>&>(column).get_data();
     int64_t divisor = 1;
     int64_t multiplier = 1;
+    // Backport note: a timezone-naive Arrow timestamp is a wall-clock value encoded as a UTC
+    // epoch, so decode in UTC to preserve its date/time fields. A timezone-aware Arrow timestamp
+    // stores a UTC instant; decode in its declared zone (fallback UTC) so the resulting wall-clock
+    // matches what the field declares. The previous code unconditionally passed the session zone,
+    // which shifted naive values and forced every aware timestamp through the session's zone.
+    cctz::time_zone naive_ctz = cctz::utc_time_zone();
+    cctz::time_zone declared_ctz = cctz::utc_time_zone();
+    auto resolve_timestamp_zone = [&](const std::shared_ptr<arrow::TimestampType>& type)
+            -> const cctz::time_zone& {
+        if (type->timezone().empty()) {
+            return naive_ctz;
+        }
+        return TimezoneUtils::find_cctz_time_zone(type->timezone(), declared_ctz) ? declared_ctz
+                                                                                   : naive_ctz;
+    };
     if (arrow_array->type()->id() == arrow::Type::DATE64) {
         const auto* concrete_array = dynamic_cast<const arrow::Date64Array*>(arrow_array);
         divisor = 1000; //ms => secs
@@ -212,10 +228,12 @@ Status DataTypeDateSerDe<T>::_read_column_from_arrow(IColumn& column,
             throw doris::Exception(doris::ErrorCode::INVALID_ARGUMENT,
                                    "Invalid Time Type: " + type->name());
         }
+        const cctz::time_zone& real_ctz = resolve_timestamp_zone(type);
         for (auto value_i = start; value_i < end; ++value_i) {
             VecDateTimeValue v;
             v.from_unixtime(
-                    static_cast<Int64>(concrete_array->Value(value_i)) / divisor * multiplier, ctz);
+                    static_cast<Int64>(concrete_array->Value(value_i)) / divisor * multiplier,
+                    real_ctz);
             col_data.emplace_back(v);
         }
     } else if (arrow_array->type()->id() == arrow::Type::DATE32) {
