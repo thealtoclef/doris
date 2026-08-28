@@ -32,6 +32,7 @@
 #include "core/value/vdatetime_value.h"
 #include "exprs/function/cast/cast_to_datetimev2_impl.hpp"
 #include "exprs/function/cast/cast_to_string.h"
+#include "util/timezone_utils.h"
 
 enum {
     DIVISOR_FOR_SECOND = 1,
@@ -428,6 +429,20 @@ Status DataTypeDateTimeV2SerDe::read_column_from_arrow(IColumn& column,
         }
         const auto* base_ptr = reinterpret_cast<const uint8_t*>(concrete_array->raw_values());
         const size_t element_size = sizeof(int64_t);
+        // Backport note: a timezone-naive Arrow timestamp is a wall-clock value encoded as if it
+        // were a UTC epoch, so decode in UTC to keep its date/time fields intact. A timezone-aware
+        // Arrow timestamp stores a UTC instant; decode in its declared zone (fallback UTC) so the
+        // resulting wall-clock matches what the field declares. The previous code unconditionally
+        // passed the hardcoded session zone, which both shifted naive timestamps and forced every
+        // aware timestamp through the session's zone.
+        const bool naive = type->timezone().empty();
+        cctz::time_zone naive_ctz = cctz::utc_time_zone();
+        cctz::time_zone declared_ctz = cctz::utc_time_zone();
+        const cctz::time_zone& real_ctz =
+                naive ? naive_ctz
+                      : (TimezoneUtils::find_cctz_time_zone(type->timezone(), declared_ctz)
+                                 ? declared_ctz
+                                 : naive_ctz);
         for (auto value_i = start; value_i < end; ++value_i) {
             int64_t date_value = 0;
             const uint8_t* raw_byte_ptr = base_ptr + value_i * element_size;
@@ -436,7 +451,7 @@ Status DataTypeDateTimeV2SerDe::read_column_from_arrow(IColumn& column,
 
             DateV2Value<DateTimeV2ValueType> v;
             // convert second
-            v.from_unixtime(utc_epoch / divisor, ctz);
+            v.from_unixtime(utc_epoch / divisor, real_ctz);
             // get rest time
             // add 0 on the right to make it 6 digits. DateTimeV2Value microsecond is 6 digits,
             // the scale decides to keep the first few digits, so the valid digits should be kept at the front.

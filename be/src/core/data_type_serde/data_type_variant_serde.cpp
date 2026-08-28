@@ -17,6 +17,7 @@
 
 #include "core/data_type_serde/data_type_variant_serde.h"
 
+#include <arrow/array/array_binary.h>
 #include <arrow/array/builder_binary.h>
 
 #include <cstdint>
@@ -149,6 +150,90 @@ Status DataTypeVariantSerDe::deserialize_column_from_json_vector(
         IColumn& column, std::vector<Slice>& slices, uint64_t* num_deserialized,
         const FormatOptions& options) const {
     DESERIALIZE_COLUMN_FROM_JSON_VECTOR()
+    return Status::OK();
+}
+
+// Backport note: Arrow stream loads into VARIANT columns used to fail with NOT_IMPLEMENTED. Each
+// row's JSON bytes are parsed through the existing variant_util::parse_json_to_variant helper, the
+// same single-cell parser used by deserialize_one_cell_from_json above. Arrow nulls become "null"
+// JSON literals, matching the JSON text import path. Arrow STRING / BINARY / LARGE_STRING /
+// LARGE_BINARY arrays are accepted; anything else is rejected with a graceful Status. Buffer
+// access mirrors data_type_string_serde.cpp's read_column_from_arrow so we don't introduce a new
+// access pattern.
+Status DataTypeVariantSerDe::read_column_from_arrow(IColumn& column,
+                                                    const arrow::Array* arrow_array, int64_t start,
+                                                    int64_t end,
+                                                    const cctz::time_zone& ctz) const {
+    if (arrow_array == nullptr) {
+        return Status::InvalidArgument("Variant Arrow array is null");
+    }
+    if (arrow_array->type() == nullptr) {
+        return Status::InvalidArgument("Variant Arrow array has no type");
+    }
+    if (start < 0 || end < start || end > arrow_array->length()) {
+        return Status::InvalidArgument(
+                "Variant Arrow read range is invalid: start={}, end={}, length={}", start, end,
+                arrow_array->length());
+    }
+    ParseConfig parse_config;
+    parse_config.check_duplicate_json_path = config::variant_enable_duplicate_json_path_check;
+    static const StringRef k_null_json("null", 4);
+    const auto type_id = arrow_array->type()->id();
+    if (type_id == arrow::Type::STRING || type_id == arrow::Type::BINARY) {
+        const auto* concrete_array = dynamic_cast<const arrow::BinaryArray*>(arrow_array);
+        if (concrete_array == nullptr) {
+            return Status::InvalidArgument(
+                    "Failed to cast Arrow array of type {} to BinaryArray for variant column",
+                    arrow_array->type()->name());
+        }
+        const auto* offsets_data = concrete_array->value_offsets()->data();
+        std::shared_ptr<arrow::Buffer> buffer = concrete_array->value_data();
+        const uint8_t* raw_buffer = buffer ? buffer->data() : nullptr;
+        for (int64_t offset_i = start; offset_i < end; ++offset_i) {
+            StringRef json_ref;
+            if (concrete_array->IsNull(offset_i)) {
+                json_ref = k_null_json;
+            } else {
+                int32_t start_offset = 0;
+                int32_t end_offset = 0;
+                memcpy(&start_offset, offsets_data + offset_i * sizeof(int32_t), sizeof(int32_t));
+                memcpy(&end_offset, offsets_data + (offset_i + 1) * sizeof(int32_t),
+                       sizeof(int32_t));
+                json_ref = StringRef(reinterpret_cast<const char*>(raw_buffer + start_offset),
+                                     end_offset - start_offset);
+            }
+            variant_util::parse_json_to_variant(column, json_ref, nullptr, parse_config);
+        }
+    } else if (type_id == arrow::Type::LARGE_STRING || type_id == arrow::Type::LARGE_BINARY) {
+        const auto* concrete_array = dynamic_cast<const arrow::LargeBinaryArray*>(arrow_array);
+        if (concrete_array == nullptr) {
+            return Status::InvalidArgument(
+                    "Failed to cast Arrow array of type {} to LargeBinaryArray for variant column",
+                    arrow_array->type()->name());
+        }
+        const auto* offsets_data = concrete_array->value_offsets()->data();
+        std::shared_ptr<arrow::Buffer> buffer = concrete_array->value_data();
+        const uint8_t* raw_buffer = buffer ? buffer->data() : nullptr;
+        for (int64_t offset_i = start; offset_i < end; ++offset_i) {
+            StringRef json_ref;
+            if (concrete_array->IsNull(offset_i)) {
+                json_ref = k_null_json;
+            } else {
+                int64_t start_offset = 0;
+                int64_t end_offset = 0;
+                memcpy(&start_offset, offsets_data + offset_i * sizeof(int64_t), sizeof(int64_t));
+                memcpy(&end_offset, offsets_data + (offset_i + 1) * sizeof(int64_t),
+                       sizeof(int64_t));
+                json_ref = StringRef(reinterpret_cast<const char*>(raw_buffer + start_offset),
+                                     end_offset - start_offset);
+            }
+            variant_util::parse_json_to_variant(column, json_ref, nullptr, parse_config);
+        }
+    } else {
+        return Status::InvalidArgument("Unsupported arrow type for variant column: {}",
+                                       arrow_array->type()->name());
+    }
+    column.finalize();
     return Status::OK();
 }
 
