@@ -98,7 +98,9 @@ Status ArrowSchemaUtil::convert_to(const iceberg::NestedField& field,
 
     case iceberg::TypeID::DECIMAL: {
         auto* dt = dynamic_cast<DecimalType*>(field.field_type());
-        arrow_type = arrow::decimal(dt->get_precision(), dt->get_scale());
+        // Backport note: the bundled Arrow dropped the generic arrow::decimal() factory in favor
+        // of the typed decimal128()/decimal256() forms; main already uses decimal128().
+        arrow_type = arrow::decimal128(dt->get_precision(), dt->get_scale());
         break;
     }
 
