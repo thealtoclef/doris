@@ -92,6 +92,7 @@ import org.apache.doris.nereids.trees.plans.commands.DeleteFromCommand;
 import org.apache.doris.nereids.trees.plans.commands.DeleteFromUsingCommand;
 import org.apache.doris.nereids.trees.plans.commands.EmptyCommand;
 import org.apache.doris.nereids.trees.plans.commands.Forward;
+import org.apache.doris.nereids.trees.plans.commands.Impersonation;
 import org.apache.doris.nereids.trees.plans.commands.LoadCommand;
 import org.apache.doris.nereids.trees.plans.commands.PrepareCommand;
 import org.apache.doris.nereids.trees.plans.commands.Redirect;
@@ -689,6 +690,11 @@ public class StmtExecutor {
         context.getState().setNereids(true);
         LogicalPlan logicalPlan = ((LogicalPlanAdapter) parsedStmt).getLogicalPlan();
         checkSqlBlocked(logicalPlan.getClass());
+        // Decided here, before the statement can be prepared or forwarded, because a forwarded statement
+        // reaches the master carrying the adopted account as its only identity.
+        if (Impersonation.isIdentityManagement(logicalPlan)) {
+            Impersonation.checkNotImpersonated(context);
+        }
         if (context.getCommand() == MysqlCommand.COM_STMT_PREPARE) {
             if (isForwardToMaster()) {
                 throw new UserException("Forward master command is not supported for prepare statement");

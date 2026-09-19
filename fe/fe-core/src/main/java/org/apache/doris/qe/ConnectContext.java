@@ -179,6 +179,9 @@ public class ConnectContext {
     // In other word, currentUserIdentity is the entry that matched in Doris auth table.
     // This account determines user's access privileges.
     protected volatile UserIdentity currentUserIdentity;
+    // The identity this client authenticated as, captured at login and never changed. Null on the
+    // contexts Doris builds for internal jobs and for forwarded statements, which nobody authenticated.
+    protected volatile UserIdentity authenticatedUserIdentity;
     // Authenticated external principal captured during the login flow.
     protected volatile Principal authenticatedPrincipal;
     // Roles granted during authentication and bound to the current session.
@@ -481,6 +484,7 @@ public class ConnectContext {
         context.setEnv(env);
         context.setDatabase(currentDb);
         context.setCurrentUserIdentity(currentUserIdentity);
+        context.setAuthenticatedUserIdentity(authenticatedUserIdentity);
         context.setProcedureExec(exec);
         context.setConnectAttributes(connectAttributes);
         return context;
@@ -770,6 +774,40 @@ public class ConnectContext {
 
     public void setCurrentUserIdentity(UserIdentity currentUserIdentity) {
         this.currentUserIdentity = currentUserIdentity;
+    }
+
+    /**
+     * The identity this client authenticated as, or null when nobody logged into this context.
+     */
+    public UserIdentity getAuthenticatedUserIdentity() {
+        return authenticatedUserIdentity;
+    }
+
+    public void setAuthenticatedUserIdentity(UserIdentity authenticatedUserIdentity) {
+        this.authenticatedUserIdentity = authenticatedUserIdentity;
+    }
+
+    /** True while this session has adopted another account with EXECUTE AS and acts as it. */
+    public boolean isImpersonated() {
+        return authenticatedUserIdentity != null && !authenticatedUserIdentity.equals(currentUserIdentity);
+    }
+
+    /**
+     * Adopt another account for the rest of this session: every privilege check, mask, row filter and
+     * audit event is from here on made with it, while the session keeps its variables, its current
+     * database and its temporary tables. The compute group is re-resolved, because it was chosen and
+     * authorized for the account that chose it.
+     */
+    public void switchToImpersonatedUserIdentity(UserIdentity impersonatedUserIdentity) {
+        this.currentUserIdentity = impersonatedUserIdentity;
+        this.cloudCluster = null;
+        getSessionVariable().setCloudCluster("");
+        setComputeGroup(Env.getCurrentEnv().getAuth().getComputeGroup(getQualifiedUser()));
+    }
+
+    /** True if this session holds a server-prepared plan, which is decided for the account that prepared it. */
+    public boolean hasPreparedStatements() {
+        return !preparedStatementContextMap.isEmpty();
     }
 
     public SessionVariable getSessionVariable() {

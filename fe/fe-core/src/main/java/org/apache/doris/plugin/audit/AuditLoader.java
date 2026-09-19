@@ -155,6 +155,7 @@ public class AuditLoader extends Plugin implements AuditPlugin {
         // cs info
         logBuffer.append(event.clientIp).append(AUDIT_TABLE_COL_SEPARATOR);
         logBuffer.append(event.user).append(AUDIT_TABLE_COL_SEPARATOR);
+        logBuffer.append(event.impersonatedBy).append(AUDIT_TABLE_COL_SEPARATOR);
         logBuffer.append(event.feIp).append(AUDIT_TABLE_COL_SEPARATOR);
 
         // default ctl and db

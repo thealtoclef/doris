@@ -192,6 +192,10 @@ public class AccessControllerManager {
         return defaultAccessController.checkGlobalPriv(currentUser, wanted);
     }
 
+    public boolean checkImpersonatePriv(UserIdentity currentUser, String targetUser) {
+        return defaultAccessController.checkImpersonatePriv(currentUser, targetUser);
+    }
+
     // ==== Catalog ====
     public boolean checkCtlPriv(ConnectContext ctx, String ctl, PrivPredicate wanted) {
         return checkCtlPriv(ctx.getCurrentUserIdentity(), ctl, wanted);

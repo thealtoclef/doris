@@ -54,6 +54,7 @@ import java.nio.ByteOrder;
 import java.nio.channels.AsynchronousCloseException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -348,6 +349,14 @@ public class MysqlConnectProcessor extends ConnectProcessor {
             return;
         }
 
+        // An adopted account is for the rest of the session, so a session that acts as one cannot take
+        // another identity at all, credentials or not.
+        if (ctx.isImpersonated()) {
+            ctx.getState().setError(ErrorCode.ERR_ACCESS_DENIED_ERROR,
+                    "Change user is not allowed in a session that has run EXECUTE AS");
+            return;
+        }
+
         // Check password.
         List<UserIdentity> currentUserIdentity = Lists.newArrayList();
         try {
@@ -358,6 +367,12 @@ public class MysqlConnectProcessor extends ConnectProcessor {
             return;
         }
         ctx.setCurrentUserIdentity(currentUserIdentity.get(0));
+        // This is a new authentication: the identity it authenticated, and nothing the previous login was
+        // handed, is what the session runs under from here on.
+        ctx.setAuthenticatedUserIdentity(currentUserIdentity.get(0));
+        ctx.setAuthenticatedRoles(Collections.emptySet());
+        ctx.setAuthenticatedPrincipal(null);
+        ctx.setIsTempUser(false);
 
         // Change default db if set.
         if (Strings.isNullOrEmpty(db)) {

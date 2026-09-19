@@ -82,6 +82,14 @@ public interface CatalogAccessController {
 
     boolean checkStorageVaultPriv(UserIdentity currentUser, String storageVaultName, PrivPredicate wanted);
 
+    /**
+     * Whether currentUser may adopt the account named by targetUser with EXECUTE AS. The target is the
+     * resource: see {@code RangerDorisAccessController} for a policy layer that models accounts.
+     */
+    default boolean checkImpersonatePriv(UserIdentity currentUser, String targetUser) {
+        return checkGlobalPriv(currentUser, PrivPredicate.IMPERSONATE);
+    }
+
     Optional<DataMaskPolicy> evalDataMaskPolicy(UserIdentity currentUser, String ctl, String db, String tbl,
             String col);
 

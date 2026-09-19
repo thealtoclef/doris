@@ -98,6 +98,11 @@ public class CreatePolicyCommand extends Command implements ForwardWithSync {
         return visitor.visitCreatePolicyCommand(this, context);
     }
 
+    /** True for a row policy: it decides which rows a subject sees, where a storage policy does not. */
+    public boolean isRowPolicy() {
+        return policyType == PolicyTypeEnum.ROW;
+    }
+
     @Override
     public void run(ConnectContext ctx, StmtExecutor executor) throws Exception {
         validate(ctx);

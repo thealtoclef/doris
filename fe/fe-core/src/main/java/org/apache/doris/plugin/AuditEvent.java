@@ -64,6 +64,9 @@ public class AuditEvent {
     public String clientIp = "";
     @AuditField(value = "User", colName = "user")
     public String user = "";
+    // The account the session authenticated as when it ran EXECUTE AS, empty otherwise.
+    @AuditField(value = "ImpersonatedBy", colName = "impersonated_by")
+    public String impersonatedBy = "";
     @AuditField(value = "FeIp", colName = "frontend_ip")
     public String feIp = "";
 
@@ -193,6 +196,11 @@ public class AuditEvent {
 
         public AuditEventBuilder setUser(String user) {
             auditEvent.user = user;
+            return this;
+        }
+
+        public AuditEventBuilder setImpersonatedBy(String impersonatedBy) {
+            auditEvent.impersonatedBy = impersonatedBy;
             return this;
         }
 

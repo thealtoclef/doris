@@ -50,6 +50,7 @@ statement
 
 statementBase
     : explain? query outFileClause?     #statementDefault
+    | EXECUTE AS user=identifierOrText WITH NO REVERT                          #executeAs
     | supportedDmlStatement             #supportedDmlStatementAlias
     | supportedCreateStatement          #supportedCreateStatementAlias
     | supportedAlterStatement           #supportedAlterStatementAlias
@@ -2308,6 +2309,7 @@ nonReserved
     | RETENTION
     | REQUIRE
     | RETURNS
+    | REVERT
     | REWRITTEN
     | RIGHT_BRACE
     | RLIKE

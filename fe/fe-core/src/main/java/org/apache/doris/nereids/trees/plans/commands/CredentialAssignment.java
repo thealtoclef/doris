@@ -15,8 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package org.apache.doris.catalog.authorizer.ranger.doris;
+package org.apache.doris.nereids.trees.plans.commands;
 
-public enum DorisObjectType {
-    NONE, CATALOG, DATABASE, TABLE, COLUMN, RESOURCE, WORKLOAD_GROUP, GLOBAL, COMPUTE_GROUP, STORAGE_VAULT, USER
+/**
+ * A SET assignment that writes an account credential, which {@link Impersonation#isIdentityManagement}
+ * refuses for a session acting as an account it adopted. It is on the assignment because one SET carries
+ * several of them and only some write a credential.
+ */
+public interface CredentialAssignment {
 }

@@ -52,6 +52,11 @@ public class SetOptionsCommand extends Command implements Forward, NeedAuditEncr
         return RedirectStatus.NO_FORWARD;
     }
 
+    /** True when one of the assignments writes an account credential, as opposed to a session variable. */
+    public boolean isCredentialAssignment() {
+        return setVarOpList.stream().anyMatch(varOp -> varOp instanceof CredentialAssignment);
+    }
+
     @Override
     public void run(ConnectContext ctx, StmtExecutor executor) throws Exception {
         for (SetVarOp varOp : setVarOpList) {

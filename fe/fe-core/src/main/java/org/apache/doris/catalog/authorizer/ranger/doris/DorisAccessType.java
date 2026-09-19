@@ -31,6 +31,7 @@ public enum DorisAccessType {
     DROP,
     USAGE,
     SHOW_VIEW,
+    IMPERSONATE,
     NONE;
     public static DorisAccessType toAccessType(Privilege privilege) {
         switch (privilege) {
@@ -56,6 +57,8 @@ public enum DorisAccessType {
                 return USAGE;
             case SHOW_VIEW_PRIV:
                 return SHOW_VIEW;
+            case IMPERSONATE_PRIV:
+                return IMPERSONATE;
             default:
                 return NONE;
         }

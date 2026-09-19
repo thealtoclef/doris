@@ -17,6 +17,7 @@
 
 package org.apache.doris.plugin.audit;
 
+import org.apache.doris.catalog.InternalSchema;
 import org.apache.doris.common.jmockit.Deencapsulation;
 import org.apache.doris.plugin.AuditEvent;
 
@@ -62,6 +63,39 @@ public class AuditLoaderTest {
             throw new AssertionError("failed to assemble audit event", error.get());
         }
         Assert.assertTrue(getAuditLogBuffer(auditLoader).contains(auditEvent.queryId));
+    }
+
+    @Test
+    public void testTheImpersonatedColumnIsWhereTheAuditTableExpectsIt() throws Exception {
+        AuditLoader auditLoader = new AuditLoader();
+        AuditEvent auditEvent = new AuditEvent.AuditEventBuilder()
+                .setQueryId("query-of-an-impersonated-session")
+                .setClientIp("127.0.0.1")
+                .setUser("alice")
+                .setImpersonatedBy("superset_gateway")
+                .setStmt("select 1")
+                .build();
+
+        Deencapsulation.invoke(auditLoader, "assembleAudit", auditEvent);
+
+        // The internal audit table is created from InternalSchema.AUDIT_SCHEMA and the loader writes
+        // the same fields positionally, so a column known to one and not the other loses every audit
+        // row rather than one column of it.
+        String buffer = getAuditLogBuffer(auditLoader);
+        String row = buffer.substring(0, buffer.length() - 1);
+        String[] columns = row.split(String.valueOf(AuditLoader.AUDIT_TABLE_COL_SEPARATOR), -1);
+        Assert.assertEquals(InternalSchema.AUDIT_SCHEMA.size(), columns.length);
+
+        int userIndex = -1;
+        for (int i = 0; i < InternalSchema.AUDIT_SCHEMA.size(); i++) {
+            if ("user".equals(InternalSchema.AUDIT_SCHEMA.get(i).getName())) {
+                userIndex = i;
+            }
+        }
+        Assert.assertTrue("the audit schema declares no user column", userIndex >= 0);
+        Assert.assertEquals("impersonated_by", InternalSchema.AUDIT_SCHEMA.get(userIndex + 1).getName());
+        Assert.assertEquals("alice", columns[userIndex]);
+        Assert.assertEquals("superset_gateway", columns[userIndex + 1]);
     }
 
     private boolean waitForBlocked(Thread thread) throws InterruptedException {

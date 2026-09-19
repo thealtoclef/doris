@@ -259,7 +259,9 @@ public class Auth implements Writable {
             }
         }
         ConnectContext ctx = ConnectContext.get();
-        if (ctx != null && userIdentity.equals(ctx.getCurrentUserIdentity())) {
+        // Roles an authentication handed out belong to the account that authenticated, not to an account
+        // a later EXECUTE AS adopted.
+        if (ctx != null && userIdentity.equals(ctx.getAuthenticatedUserIdentity())) {
             for (String roleName : ctx.getAuthenticatedRoles()) {
                 Role role = roleManager.getRole(roleName);
                 if (role != null) {
@@ -288,6 +290,15 @@ public class Auth implements Writable {
 
     public List<UserIdentity> getUserIdentityForExternalAuth(String remoteUser, String remoteHost) {
         return userManager.getUserIdentityUncheckPasswd(remoteUser, remoteHost);
+    }
+
+    /**
+     * The accounts a session may adopt when it impersonates <code>remoteUser</code> from
+     * <code>remoteHost</code>: the ones a login of that name from that host would reach, no password
+     * involved.
+     */
+    public List<UserIdentity> getUserIdentityForImpersonation(String remoteUser, String remoteHost) {
+        return userManager.getUserIdentityForImpersonation(remoteUser, remoteHost);
     }
 
     public boolean doesUserExist(String remoteUser, String remoteHost) {

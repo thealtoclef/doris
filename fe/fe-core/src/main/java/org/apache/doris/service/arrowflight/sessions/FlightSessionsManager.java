@@ -57,6 +57,8 @@ public interface FlightSessionsManager {
         connectContext.setEnv(Env.getCurrentEnv());
         connectContext.setStartTime();
         connectContext.setCurrentUserIdentity(userIdentity);
+        // The identity the session authenticated as, which is what lets it adopt another account later.
+        connectContext.setAuthenticatedUserIdentity(userIdentity);
         connectContext.setRemoteIP(remoteIP);
         connectContext.setUserQueryTimeout(
                 connectContext.getEnv().getAuth().getQueryTimeout(connectContext.getQualifiedUser()));

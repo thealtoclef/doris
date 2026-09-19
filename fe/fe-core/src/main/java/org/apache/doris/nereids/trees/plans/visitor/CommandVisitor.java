@@ -143,6 +143,7 @@ import org.apache.doris.nereids.trees.plans.commands.DropWorkloadGroupCommand;
 import org.apache.doris.nereids.trees.plans.commands.DropWorkloadPolicyCommand;
 import org.apache.doris.nereids.trees.plans.commands.EmptyCommand;
 import org.apache.doris.nereids.trees.plans.commands.ExecuteActionCommand;
+import org.apache.doris.nereids.trees.plans.commands.ExecuteAsCommand;
 import org.apache.doris.nereids.trees.plans.commands.ExplainCommand;
 import org.apache.doris.nereids.trees.plans.commands.ExplainDictionaryCommand;
 import org.apache.doris.nereids.trees.plans.commands.ExportCommand;
@@ -687,6 +688,10 @@ public interface CommandVisitor<R, C> {
     }
 
     default R visitExecuteActionCommand(ExecuteActionCommand command, C context) {
+        return visitCommand(command, context);
+    }
+
+    default R visitExecuteAsCommand(ExecuteAsCommand command, C context) {
         return visitCommand(command, context);
     }
 

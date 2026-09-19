@@ -48,7 +48,10 @@ public enum Privilege {
     CLUSTER_USAGE_PRIV("Cluster_usage_priv", 12, "Privilege for using cluster", "RESOURCE"),
     // 13 placeholder for stage
     STAGE_USAGE_PRIV("Stage_usage_priv", 13, "Privilege for using stage", "RESOURCE"),
-    SHOW_VIEW_PRIV("Show_view_priv", 14, "Privilege for show create view", "GLOBAL,CATALOG,DATABASE,TABLE");
+    SHOW_VIEW_PRIV("Show_view_priv", 14, "Privilege for show create view", "GLOBAL,CATALOG,DATABASE,TABLE"),
+    // Adopt another account for the lifetime of a session (`EXECUTE AS <user> WITH NO REVERT`).
+    // Global-only: a Doris privilege is a (privilege, resource) pair and a user is not a resource.
+    IMPERSONATE_PRIV("Impersonate_priv", 15, "Privilege for impersonating another user", "GLOBAL");
 
     public static final Map<Integer, Privilege> privileges;
 
@@ -73,6 +76,7 @@ public enum Privilege {
         privileges.put(12, CLUSTER_USAGE_PRIV);
         privileges.put(13, STAGE_USAGE_PRIV);
         privileges.put(14, SHOW_VIEW_PRIV);
+        privileges.put(15, IMPERSONATE_PRIV);
     }
 
 
@@ -80,6 +84,7 @@ public enum Privilege {
     public static final Privilege[] notBelongToResourcePrivileges = {
             NODE_PRIV,
             ADMIN_PRIV,
+            IMPERSONATE_PRIV,
             SELECT_PRIV,
             LOAD_PRIV,
             ALTER_PRIV,
@@ -92,6 +97,7 @@ public enum Privilege {
     public static final Privilege[] notBelongToWorkloadGroupPrivileges = {
             NODE_PRIV,
             ADMIN_PRIV,
+            IMPERSONATE_PRIV,
             SELECT_PRIV,
             LOAD_PRIV,
             ALTER_PRIV,

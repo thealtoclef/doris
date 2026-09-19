@@ -30,6 +30,7 @@ import org.apache.doris.resource.workloadgroup.WorkloadGroupMgr;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.ranger.plugin.model.RangerServiceDef;
 import org.apache.ranger.plugin.policyengine.RangerAccessRequest.ResourceMatchingScope;
 import org.apache.ranger.plugin.policyengine.RangerAccessRequestImpl;
 import org.apache.ranger.plugin.policyengine.RangerAccessResult;
@@ -133,6 +134,44 @@ public class RangerDorisAccessController extends RangerAccessController {
     private boolean checkGlobalPrivInternal(UserIdentity currentUser, PrivPredicate wanted, PrivBitSet checkedPrivs) {
         RangerDorisResource resource = new RangerDorisResource(DorisObjectType.GLOBAL, GLOBAL_PRIV_FIXED_NAME);
         return checkPrivilege(currentUser, wanted, resource, checkedPrivs);
+    }
+
+    /**
+     * Whether currentUser may adopt the account named by targetUser with EXECUTE AS.
+     *
+     * <p>Where the service definition models accounts — it declares a {@code user} resource — that
+     * resource decides, so a policy can name the accounts it allows or a pattern over them:
+     * {@code {resources: {user: ['tenant-a-*']}, permissions: [IMPERSONATE]}}, and a policy that denies an
+     * account is not widened by a global grant. Where the service definition does not declare it, the
+     * global check answers, so a deployment that has not adopted the resource keeps working as before.
+     */
+    @Override
+    public boolean checkImpersonatePriv(UserIdentity currentUser, String targetUser) {
+        if (serviceDefModelsAccounts()) {
+            return checkAccountPriv(currentUser, targetUser);
+        }
+        if (!checkGlobalPriv(currentUser, PrivPredicate.IMPERSONATE)) {
+            return false;
+        }
+        // A policy refresh may have landed between the read above and the check, and the account resource
+        // decides as soon as the definition declares it. Reading again before trusting an allow keeps the
+        // fallback to the window where no definition has ever declared accounts, and a deny there always wins.
+        return !serviceDefModelsAccounts() || checkAccountPriv(currentUser, targetUser);
+    }
+
+    private boolean checkAccountPriv(UserIdentity currentUser, String targetUser) {
+        RangerDorisResource resource = new RangerDorisResource(DorisObjectType.USER,
+                ClusterNamespace.getNameFromFullName(targetUser));
+        return checkPrivilegeByPlugin(currentUser, DorisAccessType.IMPERSONATE, resource);
+    }
+
+    private boolean serviceDefModelsAccounts() {
+        RangerServiceDef serviceDef = dorisPlugin.getServiceDef();
+        if (serviceDef == null || serviceDef.getResources() == null) {
+            return false;
+        }
+        return serviceDef.getResources().stream()
+                .anyMatch(resource -> RangerDorisResource.KEY_USER.equals(resource.getName()));
     }
 
     @Override

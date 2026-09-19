@@ -221,6 +221,7 @@ public class AuthenticatorManager {
 
     private void applyAuthenticateResponse(ConnectContext context, String remoteIp, AuthenticateResponse response) {
         context.setCurrentUserIdentity(response.getUserIdentity());
+        context.setAuthenticatedUserIdentity(response.getUserIdentity());
         context.setRemoteIP(remoteIp);
         context.setIsTempUser(response.isTemp());
         context.setAuthenticatedPrincipal(response.getPrincipal());

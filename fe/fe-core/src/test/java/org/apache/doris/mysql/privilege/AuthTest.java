@@ -77,6 +77,9 @@ public class AuthTest extends TestWithFeService {
 
         ConnectContext ctx = new ConnectContext();
         ctx.setCurrentUserIdentity(tempUserIdentity);
+        // A role an authentication handed out belongs to the session that authenticated, so a session is
+        // shaped the way a login leaves it: both identities are the account it logged in as.
+        ctx.setAuthenticatedUserIdentity(tempUserIdentity);
         ctx.setThreadLocalInfo();
         try {
             ctx.setAuthenticatedRoles(Collections.singleton("jit_role_auth_test"));

@@ -220,6 +220,7 @@ import org.apache.doris.nereids.DorisParser.ElementAtContext;
 import org.apache.doris.nereids.DorisParser.EnableFeatureClauseContext;
 import org.apache.doris.nereids.DorisParser.ExceptContext;
 import org.apache.doris.nereids.DorisParser.ExceptOrReplaceContext;
+import org.apache.doris.nereids.DorisParser.ExecuteAsContext;
 import org.apache.doris.nereids.DorisParser.ExistContext;
 import org.apache.doris.nereids.DorisParser.ExplainContext;
 import org.apache.doris.nereids.DorisParser.ExportContext;
@@ -761,6 +762,7 @@ import org.apache.doris.nereids.trees.plans.commands.DropViewCommand;
 import org.apache.doris.nereids.trees.plans.commands.DropWorkloadGroupCommand;
 import org.apache.doris.nereids.trees.plans.commands.DropWorkloadPolicyCommand;
 import org.apache.doris.nereids.trees.plans.commands.ExecuteActionCommand;
+import org.apache.doris.nereids.trees.plans.commands.ExecuteAsCommand;
 import org.apache.doris.nereids.trees.plans.commands.ExplainCommand;
 import org.apache.doris.nereids.trees.plans.commands.ExplainCommand.ExplainLevel;
 import org.apache.doris.nereids.trees.plans.commands.ExplainDictionaryCommand;
@@ -7011,6 +7013,17 @@ public class LogicalPlanBuilder extends DorisParserBaseVisitor<Object> {
         String comment = ctx.STRING_LITERAL() == null ? "" : LogicalPlanBuilderAssistant.escapeBackSlash(
                 ctx.STRING_LITERAL().getText().substring(1, ctx.STRING_LITERAL().getText().length() - 1));
         return new CreateRoleCommand(ctx.EXISTS() != null, roleName, comment);
+    }
+
+    @Override
+    public LogicalPlan visitExecuteAs(ExecuteAsContext ctx) {
+        // The host is deliberately not part of the statement: the account adopted is the one a login
+        // of this name from this client would reach, which is what makes a host-restricted account
+        // unreachable from outside its range.
+        String targetUser = ctx.user.STRING_LITERAL() == null ? stripQuotes(ctx.user.getText())
+                : LogicalPlanBuilderAssistant.escapeBackSlash(
+                        ctx.user.getText().substring(1, ctx.user.getText().length() - 1));
+        return new ExecuteAsCommand(targetUser);
     }
 
     @Override

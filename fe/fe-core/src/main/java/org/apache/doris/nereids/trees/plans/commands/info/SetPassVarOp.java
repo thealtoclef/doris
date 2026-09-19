@@ -27,12 +27,13 @@ import org.apache.doris.common.ErrorReport;
 import org.apache.doris.common.UserException;
 import org.apache.doris.mysql.privilege.Auth;
 import org.apache.doris.mysql.privilege.PrivPredicate;
+import org.apache.doris.nereids.trees.plans.commands.CredentialAssignment;
 import org.apache.doris.qe.ConnectContext;
 
 /**
  * SetPassVarOp
  */
-public class SetPassVarOp extends SetVarOp {
+public class SetPassVarOp extends SetVarOp implements CredentialAssignment {
     private UserIdentity userIdent;
     private PassVar passVar;
 

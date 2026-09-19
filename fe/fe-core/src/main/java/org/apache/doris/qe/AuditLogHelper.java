@@ -38,6 +38,7 @@ import org.apache.doris.nereids.rules.exploration.mv.MaterializationContext;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.algebra.InlineTable;
 import org.apache.doris.nereids.trees.plans.algebra.OneRowRelation;
+import org.apache.doris.nereids.trees.plans.commands.Impersonation;
 import org.apache.doris.nereids.trees.plans.commands.NeedAuditEncryption;
 import org.apache.doris.nereids.trees.plans.commands.insert.InsertIntoTableCommand;
 import org.apache.doris.nereids.trees.plans.logical.LogicalPlan;
@@ -206,6 +207,7 @@ public class AuditLogHelper {
                 .setTimestamp(ctx.getStartTime())
                 .setClientIp(ctx.getClientIP())
                 .setUser(ClusterNamespace.getNameFromFullName(ctx.getQualifiedUser()))
+                .setImpersonatedBy(Impersonation.auditActor(ctx))
                 .setFeIp(FrontendOptions.getLocalHostAddress())
                 .setCtl(catalog == null ? InternalCatalog.INTERNAL_CATALOG_NAME : catalog.getName())
                 .setDb(ClusterNamespace.getNameFromFullName(ctx.getDatabase()))

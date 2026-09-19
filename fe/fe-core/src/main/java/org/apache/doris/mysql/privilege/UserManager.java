@@ -175,6 +175,34 @@ public class UserManager implements Writable, GsonPostProcessable {
         }
     }
 
+    /**
+     * The accounts a login of <code>remoteUser</code> from <code>remoteHost</code> would reach, which is what
+     * EXECUTE AS may adopt. It differs from {@link #getUserIdentityUncheckPasswd} in what it makes of a domain
+     * resolver's entry: a login matches the per-address entry the resolver created and then continues as the
+     * domain account that entry was resolved from, so that account is the identity handed back rather than the
+     * address it was reached at.
+     */
+    public List<UserIdentity> getUserIdentityForImpersonation(String remoteUser, String remoteHost) {
+        List<UserIdentity> userIdentities = Lists.newArrayList();
+        rlock.lock();
+        try {
+            List<User> users = nameToUsers.getOrDefault(remoteUser, Lists.newArrayList());
+            for (User user : users) {
+                if (user.getUserIdentity().isDomain()
+                        || !(user.isAnyHost() || user.getHostPattern().match(remoteHost))) {
+                    continue;
+                }
+                UserIdentity userIdentity = user.getDomainUserIdentity();
+                if (userIdentity != null && !userIdentities.contains(userIdentity)) {
+                    userIdentities.add(userIdentity);
+                }
+            }
+            return userIdentities;
+        } finally {
+            rlock.unlock();
+        }
+    }
+
     private String hasRemotePasswd(boolean plain, byte[] remotePasswd) {
         if (plain) {
             return "YES";
