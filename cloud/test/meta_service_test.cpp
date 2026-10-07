@@ -2903,6 +2903,25 @@ TEST(MetaServiceTest, GetPrepareTxnByCoordinatorTest) {
 
         ASSERT_EQ(resp.status().code(), MetaServiceCode::INVALID_ARGUMENT);
     }
+
+    // Test 5: The coordinator BE is rescheduled onto a different host (new ip) but keeps its
+    // backend id. The prepared transactions must still be found by id, otherwise they would be
+    // leaked until the txn timeout and block schema changes.
+    {
+        brpc::Controller cntl;
+        GetPrepareTxnByCoordinatorRequest req;
+        GetPrepareTxnByCoordinatorResponse resp;
+
+        req.set_cloud_unique_id(cloud_unique_id);
+        req.set_id(coordinator_id);
+        req.set_ip("192.168.100.200:9050"); // Different ip than the one recorded in the txns
+
+        meta_service->get_prepare_txn_by_coordinator(
+                reinterpret_cast<::google::protobuf::RpcController*>(&cntl), &req, &resp, nullptr);
+
+        ASSERT_EQ(resp.status().code(), MetaServiceCode::OK);
+        ASSERT_EQ(resp.txn_infos_size(), 5);
+    }
 }
 
 TEST(MetaServiceTest, CheckTxnConflictTest) {

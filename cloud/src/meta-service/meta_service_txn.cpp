@@ -4236,9 +4236,13 @@ void MetaServiceImpl::abort_txn_with_coordinator(::google::protobuf::RpcControll
                 return;
             }
             const auto& coordinate = info_pb.coordinator();
+            // Match on the stable backend id when both ids are known, and only fall back to the
+            // ip when the id is unknown (0). See get_prepare_txn_by_coordinator for details.
+            const bool same_coordinator = (coordinate.id() != 0 && request->id() != 0)
+                    ? (coordinate.id() == request->id())
+                    : (coordinate.ip() == request->ip());
             if (info_pb.status() == TxnStatusPB::TXN_STATUS_PREPARED &&
-                coordinate.sourcetype() == TXN_SOURCE_TYPE_BE && coordinate.id() == request->id() &&
-                coordinate.ip() == request->ip() &&
+                coordinate.sourcetype() == TXN_SOURCE_TYPE_BE && same_coordinator &&
                 coordinate.start_time() < request->start_time()) {
                 need_commit = true;
                 TxnInfoPB return_txn_info;
@@ -4330,10 +4334,17 @@ void MetaServiceImpl::get_prepare_txn_by_coordinator(
                 return;
             }
             const auto& coordinate = info_pb.coordinator();
+            // A BE is identified by its backend id, which is stable for the lifetime of the BE
+            // instance. The ip is NOT stable: it changes when the BE is rescheduled (e.g. after a
+            // node eviction) while the id stays the same, so matching on ip alone would miss the
+            // orphaned transactions of a rescheduled coordinator. Match on the id when both ids
+            // are known, and only fall back to the ip when the id is unknown (0).
+            const bool same_coordinator = (coordinate.id() != 0 && request->id() != 0)
+                    ? (coordinate.id() == request->id())
+                    : (coordinate.ip() == request->ip());
             bool matches = info_pb.status() == TxnStatusPB::TXN_STATUS_PREPARED &&
                            coordinate.sourcetype() == TXN_SOURCE_TYPE_BE &&
-                           coordinate.ip() == request->ip() &&
-                           (coordinate.id() == 0 || coordinate.id() == request->id());
+                           same_coordinator;
             if (matches && has_start_time_filter) {
                 matches = coordinate.start_time() < request->start_time();
             }

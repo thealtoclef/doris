@@ -491,8 +491,16 @@ public class GlobalTransactionMgr implements GlobalTransactionMgrIface {
         } else if (coordinator.sourceType == TransactionState.TxnSourceType.BE) {
             Backend be = Env.getCurrentSystemInfo().getBackend(coordinator.id);
             if (be != null) {
+                // The coordinating BE is identified by its (stable) backend id. In cloud mode the
+                // host recorded in the transaction coordinator is the client (pod) ip, which is
+                // neither stable across a reschedule nor comparable with the backend host (which
+                // can be an FQDN when enable_fqdn_mode is on). Comparing them would always yield a
+                // mismatch, so the coordinator would never be detected as failed and the schema
+                // change/rollup would wait until the txn timeout (hours/days). Therefore in cloud
+                // mode detect a lost coordinator purely by the backend's start time / liveness.
+                boolean sameInstance = Config.isCloudMode() || be.getHost().equals(coordinator.ip);
                 offline = false;
-                if (be.getHost().equals(coordinator.ip) && (be.getLastStartTime() > coordinator.startTime
+                if (sameInstance && (be.getLastStartTime() > coordinator.startTime
                         || (!be.isAlive() && System.currentTimeMillis() - be.getLastUpdateMs()
                                     >= Config.abort_txn_after_lost_heartbeat_time_second * 1000L))) {
                     return true;
