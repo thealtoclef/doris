@@ -31,27 +31,18 @@ import com.google.common.base.Strings;
 public class ClusterNamespace {
 
     private static final String CLUSTER_DELIMITER = ":";
+    // Names persisted before multi-cluster was removed carry this prefix.
+    private static final String LEGACY_CLUSTER_PREFIX = "default_cluster" + CLUSTER_DELIMITER;
 
+    /**
+     * Strips the legacy "default_cluster:" prefix. Any other ':' belongs to the name,
+     * e.g. "system:serviceaccount:ns:sa".
+     */
     public static String getNameFromFullName(String fullName) {
-        if (!checkName(fullName)) {
+        if (Strings.isNullOrEmpty(fullName) || !fullName.startsWith(LEGACY_CLUSTER_PREFIX)) {
             return fullName;
         }
-        return extract(fullName, 1);
-    }
-
-    private static boolean checkName(String str) {
-        if (Strings.isNullOrEmpty(str)) {
-            return false;
-        }
-
-        char delimiter = CLUSTER_DELIMITER.charAt(0);
-        int delimiterNum = 0;
-        for (int i = 0; i < str.length(); i++) {
-            if (str.charAt(i) == delimiter) {
-                delimiterNum++;
-            }
-        }
-        return delimiterNum >= 1;
+        return fullName.substring(LEGACY_CLUSTER_PREFIX.length());
     }
 
     private static String linkString(String cluster, String name) {
@@ -65,10 +56,5 @@ public class ClusterNamespace {
         final StringBuilder sb = new StringBuilder(cluster);
         sb.append(CLUSTER_DELIMITER).append(name);
         return sb.toString();
-    }
-
-    private static String extract(String fullName, int index) {
-        final String[] ele = fullName.split(CLUSTER_DELIMITER);
-        return ele[index];
     }
 }
