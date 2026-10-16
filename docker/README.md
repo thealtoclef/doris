@@ -97,6 +97,22 @@ $ export JAVA_HOME=/usr/lib/jvm/java-1.8.0
 
 The version of jdk you used to run FE must be the same version you used to compile FE.
 
+### Source-built FE and BE images
+
+```console
+$ docker compose -f docker/source-build/docker-compose.yaml up -d --build
+```
+
+The source-build Dockerfiles pass `--exclude-obs-dependencies` and
+`--exclude-cos-dependencies` to `build.sh`. OBS exclusion disables the Maven
+`obs` profile (`-Ddisable.obs=true`), avoiding resolution of `hadoop-huaweicloud`
+and its Huawei repository. COS exclusion retains upstream's
+`-Dcos.dependency.scope=provided` behavior; it changes packaging scope but does
+not prevent dependency resolution.
+
+Source generation copies Parquet Java sources only when they were generated;
+Thrift sources remain required.
+
 ### Latest update time
 
 2022-1-23
