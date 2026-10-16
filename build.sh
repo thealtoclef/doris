@@ -729,6 +729,7 @@ if [[ "${BUILD_FE}" -eq 1 ]]; then
     for extra_module_path in "${FE_EXTRA_MODULE_PATHS[@]}"; do
         modules+=("${extra_module_path}")
     done
+    modules+=("fe-authentication/fe-authentication-plugins/fe-authentication-plugin-oidc")
 fi
 if [[ "${BUILD_HIVE_UDF}" -eq 1 ]]; then
     modules+=("fe-common")
@@ -1032,6 +1033,13 @@ if [[ "${BUILD_FE}" -eq 1 ]]; then
     mkdir -p "${DORIS_OUTPUT}/fe/plugins/connectors/"
     mkdir -p "${DORIS_OUTPUT}/fe/plugins/hadoop_conf/"
     mkdir -p "${DORIS_OUTPUT}/fe/plugins/java_extensions/"
+
+    # External authentication plugins: one directory per plugin, its jar plus lib/
+    oidc_plugin_dir="${DORIS_HOME}/fe/fe-authentication/fe-authentication-plugins/fe-authentication-plugin-oidc/target"
+    rm -rf "${DORIS_OUTPUT}/fe/plugins/authentication/oidc"
+    mkdir -p "${DORIS_OUTPUT}/fe/plugins/authentication/oidc/lib"
+    cp -r -p "${oidc_plugin_dir}"/fe-authentication-plugin-oidc-*.jar "${DORIS_OUTPUT}/fe/plugins/authentication/oidc"/
+    cp -r -p "${oidc_plugin_dir}/lib"/*.jar "${DORIS_OUTPUT}/fe/plugins/authentication/oidc/lib"/
 
     if [ "${TARGET_SYSTEM}" = "Darwin" ] || [ "${TARGET_SYSTEM}" = "Linux" ]; then
       mkdir -p "${DORIS_OUTPUT}/fe/arthas"
