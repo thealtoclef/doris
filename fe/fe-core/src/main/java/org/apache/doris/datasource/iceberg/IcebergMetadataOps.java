@@ -417,14 +417,20 @@ public class IcebergMetadataOps implements ExternalMetadataOps {
                 IcebergUtils.getEffectiveIcebergFormatVersion(properties, catalogProperties));
         PartitionSpec partitionSpec = IcebergUtils.solveIcebergPartitionSpec(createTableInfo.getPartitionDesc(),
                 schema);
-        // Build and create table with optional sort order
+        // Iceberg treats location as a builder argument, not a table property.
+        String location = properties.remove(PROP_LOCATION);
         org.apache.iceberg.SortOrder sortOrder = buildSortOrder(createTableInfo.getSortOrderFields(), schema);
-        if (sortOrder != null && !sortOrder.isUnsorted()) {
-            catalog.buildTable(getTableIdentifier(dbName, tableName), schema)
+        if (location != null || (sortOrder != null && !sortOrder.isUnsorted())) {
+            Catalog.TableBuilder builder = catalog.buildTable(getTableIdentifier(dbName, tableName), schema)
                     .withPartitionSpec(partitionSpec)
-                    .withProperties(properties)
-                    .withSortOrder(sortOrder)
-                    .create();
+                    .withProperties(properties);
+            if (location != null) {
+                builder.withLocation(location);
+            }
+            if (sortOrder != null && !sortOrder.isUnsorted()) {
+                builder.withSortOrder(sortOrder);
+            }
+            builder.create();
         } else {
             catalog.createTable(getTableIdentifier(dbName, tableName), schema, partitionSpec, properties);
         }
