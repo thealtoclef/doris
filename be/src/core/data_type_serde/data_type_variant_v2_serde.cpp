@@ -30,6 +30,7 @@
 #include <optional>
 #include <orc/Vector.hh>
 #include <span>
+#include <string_view>
 #include <utility>
 
 #include "common/cast_set.h"
@@ -368,6 +369,56 @@ Status DataTypeVariantV2SerDe::read_column_from_pb(IColumn& column, const PValue
     return Status::NotSupported("read_column_from_pb with type " + column.get_name());
 }
 
+namespace {
+
+ColumnVariantV2& destination(IColumn& column) {
+    auto* result = check_and_get_column<ColumnVariantV2>(column);
+    if (result == nullptr) {
+        throw Exception(ErrorCode::INVALID_ARGUMENT,
+                        "Variant V2 SerDe destination requires ColumnVariantV2, got {}",
+                        column.get_name());
+    }
+    return *result;
+}
+
+void require_jsonb_write(bool written, const char* operation) {
+    if (!written) {
+        throw Exception(ErrorCode::INVALID_ARGUMENT, "JSONB writer rejected {}", operation);
+    }
+}
+
+// Most JSON text read here was written by a Variant serde, for example into an aggregate state, so
+// it must read back every value a Variant can hold, including keys longer than the parse limit. A
+// CAST from a JSON string to ARRAY<VARIANT> or STRUCT also passes the elements it splits out.
+JsonToVariantOptions serde_json_options() {
+    return {.max_json_key_length = std::numeric_limits<uint32_t>::max(),
+            .throw_on_invalid_json = false};
+}
+
+// Arrow text columns carry JSON documents, so reuse the batch JSON encoder instead of a per-row
+// parse; NULLs become JSON null like the legacy Variant text import path.
+template <typename ArrowTextArray>
+Status read_variant_text_column(IColumn& column, const ArrowTextArray* values, int64_t start,
+                                int64_t end) {
+    if (values == nullptr) {
+        return Status::InvalidArgument("Invalid Arrow text array for variant column");
+    }
+    if (start == end) {
+        return Status::OK();
+    }
+    RETURN_IF_CATCH_EXCEPTION({
+        JsonStringToVariantEncoder encoder;
+        for (int64_t row = start; row < end; ++row) {
+            const auto text = values->IsNull(row) ? std::string_view("null") : values->GetView(row);
+            encoder.add_json({text.data(), text.size()});
+        }
+        destination(column).insert_encoded_batch(encoder.finish_batch());
+    });
+    return Status::OK();
+}
+
+} // namespace
+
 Status DataTypeVariantV2SerDe::read_column_from_arrow(IColumn& column, const arrow::Array* array,
                                                       int64_t start, int64_t end,
                                                       const cctz::time_zone&) const {
@@ -377,6 +428,18 @@ Status DataTypeVariantV2SerDe::read_column_from_arrow(IColumn& column, const arr
     if (start < 0 || end < start || end > array->length()) {
         return Status::InvalidArgument("Invalid native Variant Arrow row range [{}, {})", start,
                                        end);
+    }
+    switch (array->type_id()) {
+    case arrow::Type::STRING:
+    case arrow::Type::BINARY:
+        return read_variant_text_column(column, dynamic_cast<const arrow::BinaryArray*>(array),
+                                        start, end);
+    case arrow::Type::LARGE_STRING:
+    case arrow::Type::LARGE_BINARY:
+        return read_variant_text_column(
+                column, dynamic_cast<const arrow::LargeBinaryArray*>(array), start, end);
+    default:
+        break;
     }
     if (array->type_id() == arrow::Type::EXTENSION) {
         const auto& extension = static_cast<const arrow::ExtensionArray&>(*array);
@@ -433,34 +496,6 @@ Status DataTypeVariantV2SerDe::read_column_from_arrow(IColumn& column, const arr
     });
     return Status::OK();
 }
-
-namespace {
-
-ColumnVariantV2& destination(IColumn& column) {
-    auto* result = check_and_get_column<ColumnVariantV2>(column);
-    if (result == nullptr) {
-        throw Exception(ErrorCode::INVALID_ARGUMENT,
-                        "Variant V2 SerDe destination requires ColumnVariantV2, got {}",
-                        column.get_name());
-    }
-    return *result;
-}
-
-void require_jsonb_write(bool written, const char* operation) {
-    if (!written) {
-        throw Exception(ErrorCode::INVALID_ARGUMENT, "JSONB writer rejected {}", operation);
-    }
-}
-
-// Most JSON text read here was written by a Variant serde, for example into an aggregate state, so
-// it must read back every value a Variant can hold, including keys longer than the parse limit. A
-// CAST from a JSON string to ARRAY<VARIANT> or STRUCT also passes the elements it splits out.
-JsonToVariantOptions serde_json_options() {
-    return {.max_json_key_length = std::numeric_limits<uint32_t>::max(),
-            .throw_on_invalid_json = false};
-}
-
-} // namespace
 
 Status DataTypeVariantV2SerDe::deserialize_one_cell_from_json(IColumn& column, Slice& slice,
                                                               const FormatOptions&) const {

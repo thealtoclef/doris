@@ -29,6 +29,7 @@
 #include "core/value/vdatetime_value.h"
 #include "exprs/function/cast/cast_base.h"
 #include "exprs/function/cast/cast_to_date_or_datetime_impl.hpp"
+#include "util/timezone_utils.h"
 
 namespace doris {
 #include "common/compile_check_begin.h"
@@ -217,10 +218,17 @@ Status DataTypeDateSerDe<T>::_read_column_from_arrow(IColumn& column,
             throw doris::Exception(doris::ErrorCode::INVALID_ARGUMENT,
                                    "Invalid Time Type: " + type->name());
         }
+        // Naive timestamps encode wall-clock fields in UTC; aware timestamps declare their zone.
+        cctz::time_zone timestamp_ctz = cctz::utc_time_zone();
+        if (!type->timezone().empty() &&
+            !TimezoneUtils::find_cctz_time_zone(type->timezone(), timestamp_ctz)) {
+            timestamp_ctz = cctz::utc_time_zone();
+        }
         for (auto value_i = start; value_i < end; ++value_i) {
             VecDateTimeValue v;
             v.from_unixtime(
-                    static_cast<Int64>(concrete_array->Value(value_i)) / divisor * multiplier, ctz);
+                    static_cast<Int64>(concrete_array->Value(value_i)) / divisor * multiplier,
+                    timestamp_ctz);
             col_data.emplace_back(v);
         }
     } else if (arrow_array->type()->id() == arrow::Type::DATE32) {
