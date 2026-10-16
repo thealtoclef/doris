@@ -17,10 +17,12 @@
 
 #include "core/data_type_serde/data_type_variant_serde.h"
 
+#include <arrow/array/array_binary.h>
 #include <arrow/array/builder_binary.h>
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include "common/cast_set.h"
 #include "common/config.h"
@@ -150,6 +152,45 @@ Status DataTypeVariantSerDe::deserialize_column_from_json_vector(
         const FormatOptions& options) const {
     DESERIALIZE_COLUMN_FROM_JSON_VECTOR()
     return Status::OK();
+}
+
+Status DataTypeVariantSerDe::read_column_from_arrow(IColumn& column,
+                                                   const arrow::Array* arrow_array, int64_t start,
+                                                   int64_t end,
+                                                   const cctz::time_zone& ctz) const {
+    if (arrow_array == nullptr || arrow_array->type() == nullptr) {
+        return Status::InvalidArgument("Variant Arrow array or type is null");
+    }
+    if (start < 0 || end < start || end > arrow_array->length()) {
+        return Status::InvalidArgument(
+                "Variant Arrow read range is invalid: start={}, end={}, length={}", start, end,
+                arrow_array->length());
+    }
+    ParseConfig parse_config;
+    parse_config.check_duplicate_json_path = config::variant_enable_duplicate_json_path_check;
+    auto read_text = [&](const auto* values) -> Status {
+        if (values == nullptr) {
+            return Status::InvalidArgument("Invalid Arrow text array for variant column");
+        }
+        for (int64_t row = start; row < end; ++row) {
+            const auto text = values->IsNull(row) ? std::string_view("null") : values->GetView(row);
+            RETURN_IF_CATCH_EXCEPTION(variant_util::parse_json_to_variant(
+                    column, StringRef(text.data(), text.size()), nullptr, parse_config));
+        }
+        column.finalize();
+        return Status::OK();
+    };
+    switch (arrow_array->type_id()) {
+    case arrow::Type::STRING:
+    case arrow::Type::BINARY:
+        return read_text(dynamic_cast<const arrow::BinaryArray*>(arrow_array));
+    case arrow::Type::LARGE_STRING:
+    case arrow::Type::LARGE_BINARY:
+        return read_text(dynamic_cast<const arrow::LargeBinaryArray*>(arrow_array));
+    default:
+        return Status::InvalidArgument("Unsupported arrow type for variant column: {}",
+                                       arrow_array->type()->name());
+    }
 }
 
 Status DataTypeVariantSerDe::write_column_to_arrow(const IColumn& column, const NullMap* null_map,

@@ -18,6 +18,7 @@
 #include "core/data_type_serde/data_type_decimal_serde.h"
 
 #include <arrow/array/array_base.h>
+#include <arrow/array/array_binary.h>
 #include <arrow/array/array_decimal.h>
 #include <arrow/builder.h>
 #include <arrow/util/decimal.h>
@@ -913,14 +914,64 @@ Status DataTypeDecimalSerDe<T>::read_column_from_arrow(IColumn& column,
                                                        const arrow::Array* arrow_array,
                                                        int64_t start, int64_t end,
                                                        const cctz::time_zone& ctz) const {
+    if (arrow_array == nullptr || arrow_array->type() == nullptr) {
+        return Status::InvalidArgument("Arrow array or type is null for decimal column {}",
+                                       column.get_name());
+    }
     if (config::enable_arrow_input_validation) {
         check_arrow_no_offset(*arrow_array);
     }
     auto& column_data = static_cast<ColumnDecimal<T>&>(column).get_data();
+    const auto type_id = arrow_array->type_id();
+    // Text imports use the same non-strict decimal cast as from_string().
+    auto read_text = [&](const auto* values) -> Status {
+        if (values == nullptr) {
+            return Status::InvalidArgument("Invalid Arrow text array for decimal column {}",
+                                           column.get_name());
+        }
+        CastParameters params;
+        params.is_strict = false;
+        for (int64_t row = start; row < end; ++row) {
+            if (values->IsNull(row)) {
+                column_data.emplace_back(FieldType {});
+                continue;
+            }
+            const auto text = values->GetView(row);
+            FieldType value;
+            if (!CastToDecimal::from_string({text.data(), text.size()}, value,
+                                           static_cast<UInt32>(precision),
+                                           static_cast<UInt32>(scale), params)) {
+                return Status::InvalidArgument("parse decimal fail, string: '{}' at row {}", text,
+                                               row);
+            }
+            column_data.emplace_back(value);
+        }
+        return Status::OK();
+    };
+    switch (type_id) {
+    case arrow::Type::STRING:
+    case arrow::Type::BINARY:
+        return read_text(dynamic_cast<const arrow::BinaryArray*>(arrow_array));
+    case arrow::Type::LARGE_STRING:
+    case arrow::Type::LARGE_BINARY:
+        return read_text(dynamic_cast<const arrow::LargeBinaryArray*>(arrow_array));
+    default:
+        break;
+    }
+    constexpr auto expected_type =
+            T == TYPE_DECIMAL256 ? arrow::Type::DECIMAL256 : arrow::Type::DECIMAL128;
+    if (type_id != expected_type) {
+        return Status::InvalidArgument("Unexpected Arrow type {} for decimal column {}",
+                                       arrow_array->type()->name(), column.get_name());
+    }
     // Decimal<Int128> for decimalv2
     // Decimal<Int128I> for deicmalv3
     if constexpr (T == TYPE_DECIMALV2) {
         const auto* concrete_array = dynamic_cast<const arrow::DecimalArray*>(arrow_array);
+        if (concrete_array == nullptr) {
+            return Status::InvalidArgument("Invalid Arrow decimal128 array for column {}",
+                                           column.get_name());
+        }
         const auto* arrow_decimal_type =
                 static_cast<const arrow::DecimalType*>(arrow_array->type().get());
         const auto arrow_scale = arrow_decimal_type->scale();
@@ -948,6 +999,10 @@ Status DataTypeDecimalSerDe<T>::read_column_from_arrow(IColumn& column,
         }
     } else if constexpr (T == TYPE_DECIMAL32 || T == TYPE_DECIMAL64 || T == TYPE_DECIMAL128I) {
         const auto* concrete_array = dynamic_cast<const arrow::DecimalArray*>(arrow_array);
+        if (concrete_array == nullptr) {
+            return Status::InvalidArgument("Invalid Arrow decimal128 array for column {}",
+                                           column.get_name());
+        }
         for (auto value_i = start; value_i < end; ++value_i) {
             const auto* value = concrete_array->Value(value_i);
             FieldType decimal_value = FieldType {};
@@ -956,6 +1011,10 @@ Status DataTypeDecimalSerDe<T>::read_column_from_arrow(IColumn& column,
         }
     } else if constexpr (T == TYPE_DECIMAL256) {
         const auto* concrete_array = dynamic_cast<const arrow::Decimal256Array*>(arrow_array);
+        if (concrete_array == nullptr) {
+            return Status::InvalidArgument("Invalid Arrow decimal256 array for column {}",
+                                           column.get_name());
+        }
         for (auto value_i = start; value_i < end; ++value_i) {
             column_data.emplace_back(
                     *reinterpret_cast<const FieldType*>(concrete_array->Value(value_i)));

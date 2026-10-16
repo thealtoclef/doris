@@ -17,6 +17,7 @@
 
 #include "core/data_type_serde/data_type_variant_v2_serde.h"
 
+#include <arrow/array/array_binary.h>
 #include <arrow/array/builder_binary.h>
 #include <arrow/array/builder_nested.h>
 #include <arrow/type.h>
@@ -27,6 +28,7 @@
 #include <optional>
 #include <orc/Vector.hh>
 #include <span>
+#include <string_view>
 #include <utility>
 
 #include "common/cast_set.h"
@@ -362,12 +364,6 @@ Status DataTypeVariantV2SerDe::read_column_from_pb(IColumn& column, const PValue
     return Status::NotSupported("read_column_from_pb with type " + column.get_name());
 }
 
-Status DataTypeVariantV2SerDe::read_column_from_arrow(IColumn& column, const arrow::Array*, int64_t,
-                                                      int64_t, const cctz::time_zone&) const {
-    return Status::Error(ErrorCode::NOT_IMPLEMENTED_ERROR,
-                         "read_column_from_arrow with type " + column.get_name());
-}
-
 namespace {
 
 ColumnVariantV2& destination(IColumn& column) {
@@ -387,6 +383,49 @@ void require_jsonb_write(bool written, const char* operation) {
 }
 
 } // namespace
+
+Status DataTypeVariantV2SerDe::read_column_from_arrow(IColumn& column,
+                                                     const arrow::Array* arrow_array, int64_t start,
+                                                     int64_t end, const cctz::time_zone&) const {
+    if (arrow_array == nullptr || arrow_array->type() == nullptr) {
+        return Status::InvalidArgument("Variant Arrow array or type is null");
+    }
+    if (start < 0 || end < start || end > arrow_array->length()) {
+        return Status::InvalidArgument(
+                "Variant Arrow read range is invalid: start={}, end={}, length={}", start, end,
+                arrow_array->length());
+    }
+    auto read_text = [&](const auto* values) -> Status {
+        if (values == nullptr) {
+            return Status::InvalidArgument("Invalid Arrow text array for variant column");
+        }
+        RETURN_IF_CATCH_EXCEPTION({
+            auto& result = destination(column);
+            if (start == end) {
+                return Status::OK();
+            }
+            JsonStringToVariantEncoder encoder;
+            for (int64_t row = start; row < end; ++row) {
+                const auto text =
+                        values->IsNull(row) ? std::string_view("null") : values->GetView(row);
+                encoder.add_json({text.data(), text.size()});
+            }
+            result.insert_encoded_batch(encoder.finish_batch());
+        });
+        return Status::OK();
+    };
+    switch (arrow_array->type_id()) {
+    case arrow::Type::STRING:
+    case arrow::Type::BINARY:
+        return read_text(dynamic_cast<const arrow::BinaryArray*>(arrow_array));
+    case arrow::Type::LARGE_STRING:
+    case arrow::Type::LARGE_BINARY:
+        return read_text(dynamic_cast<const arrow::LargeBinaryArray*>(arrow_array));
+    default:
+        return Status::InvalidArgument("Unsupported arrow type for variant column: {}",
+                                       arrow_array->type()->name());
+    }
+}
 
 Status DataTypeVariantV2SerDe::deserialize_one_cell_from_json(IColumn& column, Slice& slice,
                                                               const FormatOptions&) const {

@@ -40,6 +40,7 @@
 #include <gtest/gtest.h>
 #include <parquet/api/reader.h>
 #include <parquet/arrow/writer.h>
+#include <rapidjson/document.h>
 
 #include <array>
 #include <chrono>
@@ -49,6 +50,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -84,6 +86,7 @@
 #include "core/data_type/data_type_time.h"
 #include "core/data_type/data_type_timestamptz.h"
 #include "core/data_type/data_type_varbinary.h"
+#include "core/data_type/data_type_variant.h"
 #include "core/data_type/data_type_variant_v2.h"
 #include "core/data_type/define_primitive_type.h"
 #include "core/field.h"
@@ -1560,6 +1563,212 @@ TEST(DataTypeSerDeArrowTest, NestedDateTimeV2PlainArrowAcceptsNaiveSchema) {
             cctz::fixed_time_zone(std::chrono::hours(8)));
     ASSERT_TRUE(status.ok()) << status;
     ASSERT_TRUE(naive_batch->ValidateFull().ok()) << naive_batch->ValidateFull();
+}
+
+TEST(DataTypeSerDeArrowTest, ReadTimestampUsesDeclaredZoneNotSessionZone) {
+    const auto session_zone = cctz::fixed_time_zone(std::chrono::hours(-5));
+    for (const std::string zone : {"", "+07:00", "UTC", "Unknown/ArrowZone"}) {
+        const auto arrow_type = arrow::timestamp(arrow::TimeUnit::MICRO, zone);
+        arrow::TimestampBuilder builder(arrow_type, arrow::default_memory_pool());
+        ASSERT_TRUE(builder.Append(0).ok());
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_TRUE(builder.Finish(&array).ok());
+        const std::string expected =
+                zone == "+07:00" ? "1970-01-01 07:00:00" : "1970-01-01 00:00:00";
+        for (const DataTypePtr& type :
+             DataTypes {std::make_shared<DataTypeDateTimeV2>(6),
+                        std::make_shared<DataTypeDateTime>()}) {
+            ColumnPtr column = type->create_column();
+            auto status = arrow_column_to_doris_column(array.get(), 0, column, type, 1, session_zone);
+            ASSERT_TRUE(status.ok()) << status;
+            ColumnWithTypeAndName result(column, type, "ts");
+            EXPECT_EQ(expected + (type->get_primitive_type() == TYPE_DATETIMEV2 ? ".000000" : ""),
+                      result.to_string(0));
+        }
+    }
+}
+
+TEST(DataTypeSerDeArrowTest, ReadTimestampRetainsUnitsAndNegativeEpochFractions) {
+    const auto type = std::make_shared<DataTypeDateTimeV2>(6);
+    const std::array<std::pair<arrow::TimeUnit::type, std::string>, 4> cases {{
+            {arrow::TimeUnit::SECOND, "1969-12-31 23:59:59.000000"},
+            {arrow::TimeUnit::MILLI, "1969-12-31 23:59:59.999000"},
+            {arrow::TimeUnit::MICRO, "1969-12-31 23:59:59.999999"},
+            {arrow::TimeUnit::NANO, "1969-12-31 23:59:59.999999"},
+    }};
+    for (const auto& [unit, expected] : cases) {
+        arrow::TimestampBuilder builder(arrow::timestamp(unit), arrow::default_memory_pool());
+        ASSERT_TRUE(builder.Append(-1).ok());
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_TRUE(builder.Finish(&array).ok());
+        ColumnPtr column = type->create_column();
+        auto status = arrow_column_to_doris_column(
+                array.get(), 0, column, type, 1,
+                cctz::fixed_time_zone(std::chrono::hours(8)));
+        ASSERT_TRUE(status.ok()) << status;
+        EXPECT_EQ(expected, ColumnWithTypeAndName(column, type, "ts").to_string(0));
+    }
+}
+
+TEST(DataTypeSerDeArrowTest, ReadDecimalTextAndNulls) {
+    auto check = [](auto& builder) {
+        ASSERT_TRUE(builder.Append("12.34").ok());
+        ASSERT_TRUE(builder.AppendNull().ok());
+        ASSERT_TRUE(builder.Append("-0.01").ok());
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_TRUE(builder.Finish(&array).ok());
+        for (const DataTypePtr& decimal_type :
+             DataTypes {std::make_shared<DataTypeDecimalV2>(27, 9),
+                        std::make_shared<DataTypeDecimal32>(9, 2),
+                        std::make_shared<DataTypeDecimal64>(18, 2),
+                        std::make_shared<DataTypeDecimal128>(38, 2),
+                        std::make_shared<DataTypeDecimal256>(76, 2)}) {
+            const auto type = make_nullable(decimal_type);
+            ColumnPtr column = type->create_column();
+            const auto status = arrow_column_to_doris_column(
+                    array.get(), 0, column, type, array->length(), cctz::utc_time_zone());
+            ASSERT_TRUE(status.ok()) << status;
+            ASSERT_EQ(3, column->size());
+            const auto& nullable = assert_cast<const ColumnNullable&>(*column);
+            EXPECT_FALSE(nullable.is_null_at(0));
+            EXPECT_TRUE(nullable.is_null_at(1));
+            EXPECT_FALSE(nullable.is_null_at(2));
+            const ColumnWithTypeAndName result(column, type, "d");
+            const bool v2 = decimal_type->get_primitive_type() == TYPE_DECIMALV2;
+            EXPECT_EQ(v2 ? "12.340000000" : "12.34", result.to_string(0));
+            EXPECT_EQ(v2 ? "-0.010000000" : "-0.01", result.to_string(2));
+        }
+    };
+    arrow::StringBuilder strings;
+    check(strings);
+    arrow::BinaryBuilder binary;
+    check(binary);
+    arrow::LargeStringBuilder large_strings;
+    check(large_strings);
+    arrow::LargeBinaryBuilder large_binary;
+    check(large_binary);
+}
+
+TEST(DataTypeSerDeArrowTest, ReadDecimal256TextPreservesWideValue) {
+    arrow::StringBuilder builder;
+    ASSERT_TRUE(builder.Append("12345678901234567890.1234567890").ok());
+    std::shared_ptr<arrow::Array> array;
+    ASSERT_TRUE(builder.Finish(&array).ok());
+    const auto type = std::make_shared<DataTypeDecimal256>(76, 10);
+    ColumnPtr column = type->create_column();
+    const auto status = arrow_column_to_doris_column(array.get(), 0, column, type, 1,
+                                                    cctz::utc_time_zone());
+    ASSERT_TRUE(status.ok()) << status;
+    EXPECT_EQ("12345678901234567890.1234567890",
+              ColumnWithTypeAndName(column, type, "d").to_string(0));
+}
+
+TEST(DataTypeSerDeArrowTest, ReadDecimalRejectsInvalidTextAndWrongTypes) {
+    arrow::StringBuilder strings;
+    ASSERT_TRUE(strings.Append("not a decimal").ok());
+    std::shared_ptr<arrow::Array> invalid_text;
+    ASSERT_TRUE(strings.Finish(&invalid_text).ok());
+    arrow::Int64Builder integers;
+    ASSERT_TRUE(integers.Append(123).ok());
+    std::shared_ptr<arrow::Array> wrong_type;
+    ASSERT_TRUE(integers.Finish(&wrong_type).ok());
+    arrow::Decimal128Builder decimal128(arrow::decimal128(27, 9), arrow::default_memory_pool());
+    ASSERT_TRUE(decimal128.Append(arrow::Decimal128(1)).ok());
+    std::shared_ptr<arrow::Array> native128;
+    ASSERT_TRUE(decimal128.Finish(&native128).ok());
+    arrow::Decimal256Builder decimal256(arrow::decimal256(76, 9), arrow::default_memory_pool());
+    ASSERT_TRUE(decimal256.Append(arrow::Decimal256(1)).ok());
+    std::shared_ptr<arrow::Array> native256;
+    ASSERT_TRUE(decimal256.Finish(&native256).ok());
+    for (const DataTypePtr& type :
+         DataTypes {std::make_shared<DataTypeDecimalV2>(27, 9),
+                    std::make_shared<DataTypeDecimal32>(9, 2),
+                    std::make_shared<DataTypeDecimal64>(18, 2),
+                    std::make_shared<DataTypeDecimal128>(38, 2),
+                    std::make_shared<DataTypeDecimal256>(76, 2)}) {
+        const auto& wrong_width =
+                type->get_primitive_type() == TYPE_DECIMAL256 ? native128 : native256;
+        for (const auto* array :
+             std::array<const arrow::Array*, 4> {invalid_text.get(), wrong_type.get(),
+                                                wrong_width.get(), nullptr}) {
+            ColumnPtr column = type->create_column();
+            const auto status =
+                    arrow_column_to_doris_column(array, 0, column, type, 1, cctz::utc_time_zone());
+            EXPECT_EQ(ErrorCode::INVALID_ARGUMENT, status.code()) << status;
+            EXPECT_EQ(0, column->size());
+        }
+    }
+}
+
+TEST(DataTypeSerDeArrowTest, ReadVariantJsonTextAndNullsForBothStorageVersions) {
+    auto check = [](auto& builder) {
+        ASSERT_TRUE(builder.Append(R"({"a":1,"b":"hello"})").ok());
+        ASSERT_TRUE(builder.Append(R"([1,2])").ok());
+        ASSERT_TRUE(builder.AppendNull().ok());
+        ASSERT_TRUE(builder.Append("null").ok());
+        std::shared_ptr<arrow::Array> array;
+        ASSERT_TRUE(builder.Finish(&array).ok());
+        for (const DataTypePtr& type :
+             DataTypes {std::make_shared<DataTypeVariant>(),
+                        std::make_shared<DataTypeVariantV2>()}) {
+            ColumnPtr column = type->create_column();
+            const auto status = arrow_column_to_doris_column(
+                    array.get(), 0, column, type, array->length(), cctz::utc_time_zone());
+            ASSERT_TRUE(status.ok()) << status;
+            ASSERT_EQ(4, column->size());
+            const ColumnWithTypeAndName result(column, type, "v");
+            rapidjson::Document object;
+            object.Parse(result.to_string(0).c_str());
+            ASSERT_FALSE(object.HasParseError());
+            ASSERT_TRUE(object.IsObject());
+            ASSERT_TRUE(object.HasMember("a"));
+            ASSERT_TRUE(object.HasMember("b"));
+            ASSERT_TRUE(object["a"].IsInt());
+            ASSERT_TRUE(object["b"].IsString());
+            EXPECT_EQ(1, object["a"].GetInt());
+            EXPECT_STREQ("hello", object["b"].GetString());
+            rapidjson::Document values;
+            values.Parse(result.to_string(1).c_str());
+            ASSERT_FALSE(values.HasParseError());
+            ASSERT_TRUE(values.IsArray());
+            ASSERT_EQ(2, values.Size());
+            ASSERT_TRUE(values[0].IsInt());
+            ASSERT_TRUE(values[1].IsInt());
+            EXPECT_EQ(1, values[0].GetInt());
+            EXPECT_EQ(2, values[1].GetInt());
+            if (check_and_get_column<ColumnVariantV2>(*column) != nullptr) {
+                for (size_t row : {2, 3}) {
+                    rapidjson::Document null_value;
+                    null_value.Parse(result.to_string(row).c_str());
+                    ASSERT_FALSE(null_value.HasParseError());
+                    EXPECT_TRUE(null_value.IsNull());
+                }
+            }
+        }
+    };
+    arrow::StringBuilder strings;
+    check(strings);
+    arrow::BinaryBuilder binary;
+    check(binary);
+    arrow::LargeStringBuilder large_strings;
+    check(large_strings);
+    arrow::LargeBinaryBuilder large_binary;
+    check(large_binary);
+}
+
+TEST(DataTypeSerDeArrowTest, ReadVariantRejectsNonTextArraysForBothStorageVersions) {
+    arrow::Int64Builder builder;
+    ASSERT_TRUE(builder.Append(1).ok());
+    std::shared_ptr<arrow::Array> array;
+    ASSERT_TRUE(builder.Finish(&array).ok());
+    for (const DataTypePtr& type :
+         DataTypes {std::make_shared<DataTypeVariant>(), std::make_shared<DataTypeVariantV2>()}) {
+        ColumnPtr column = type->create_column();
+        const auto status = arrow_column_to_doris_column(array.get(), 0, column, type, 1,
+                                                        cctz::utc_time_zone());
+        EXPECT_EQ(ErrorCode::INVALID_ARGUMENT, status.code()) << status;
+        EXPECT_EQ(0, column->size());
+    }
 }
 
 } // namespace doris

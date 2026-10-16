@@ -38,6 +38,7 @@
 #include "core/value/vdatetime_value.h"
 #include "exprs/function/cast/cast_to_datetimev2_impl.hpp"
 #include "exprs/function/cast/cast_to_string.h"
+#include "util/timezone_utils.h"
 #include "util/unaligned.h"
 
 enum {
@@ -685,9 +686,12 @@ Status DataTypeDateTimeV2SerDe::read_column_from_arrow(IColumn& column,
                                            type->unit());
         }
         }
-        // A timezone-naive Arrow timestamp is a wall-clock value. Decode its epoch-based
-        // representation in UTC so the session timezone does not shift its date/time fields.
-        const cctz::time_zone& real_ctz = type->timezone().empty() ? cctz::utc_time_zone() : ctz;
+        // Naive timestamps encode wall-clock fields in UTC; aware timestamps declare their zone.
+        cctz::time_zone real_ctz = cctz::utc_time_zone();
+        if (!type->timezone().empty() &&
+            !TimezoneUtils::find_cctz_time_zone(type->timezone(), real_ctz)) {
+            real_ctz = cctz::utc_time_zone();
+        }
         const auto* base_ptr = reinterpret_cast<const uint8_t*>(concrete_array->raw_values());
         const size_t element_size = sizeof(int64_t);
         for (auto value_i = start; value_i < end; ++value_i) {
