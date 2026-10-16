@@ -253,6 +253,8 @@ if ! OPTS="$(getopt \
     -l 'be-java-extensions' \
     -l 'be-cdc-client' \
     -l 'be-extension-ignore:' \
+    -l 'exclude-obs-dependencies' \
+    -l 'exclude-cos-dependencies' \
     -l 'clean' \
     -l 'coverage' \
     -l 'help' \
@@ -933,7 +935,7 @@ function build_fe_modules() {
         extra_mvn_opts=(${MVN_OPT})
     fi
     if [[ "${BUILD_OBS_DEPENDENCIES}" -eq 0 ]]; then
-        dependency_mvn_opts+=("-Dobs.dependency.scope=provided")
+        dependency_mvn_opts+=("-Ddisable.obs=true")
     fi
     if [[ "${BUILD_COS_DEPENDENCIES}" -eq 0 ]]; then
         dependency_mvn_opts+=("-Dcos.dependency.scope=provided")
