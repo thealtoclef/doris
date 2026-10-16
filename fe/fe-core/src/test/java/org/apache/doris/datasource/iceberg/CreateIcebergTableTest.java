@@ -34,7 +34,9 @@ import org.apache.iceberg.RowLevelOperationMode;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
+import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
 import org.junit.Assert;
@@ -251,6 +253,38 @@ public class CreateIcebergTableTest {
         Assert.assertEquals("mIxEd_COL", schema.columns().get(1).name());
         Assert.assertEquals(1, table.sortOrder().fields().size());
         Assert.assertEquals(schema.findField("mIxEd_COL").fieldId(), table.sortOrder().fields().get(0).sourceId());
+    }
+
+    @Test
+    public void testCustomLocationWithAndWithoutSortOrder() throws Exception {
+        try (InMemoryCatalog catalog = new InMemoryCatalog()) {
+            catalog.initialize("custom_location", new HashMap<>());
+            catalog.createNamespace(Namespace.of(dbName));
+            IcebergMetadataOps metadataOps = new IcebergMetadataOps(icebergCatalog, catalog);
+            for (boolean sorted : new boolean[] {false, true}) {
+                String tableName = getTableName();
+                TableIdentifier identifier = TableIdentifier.of(dbName, tableName);
+                String location = "s3://custom-warehouse/" + tableName;
+                String sql = "create table " + identifier + " (id int) engine = iceberg "
+                        + (sorted ? "order by (id asc) " : "")
+                        + "properties(\"location\"=\"" + location + "\", \"owner\"=\"doris\")";
+                CreateTableInfo info = ((CreateTableCommand) new NereidsParser().parseSingle(sql))
+                        .getCreateTableInfo();
+                info.setIsExternal(true);
+                info.analyzeEngine();
+                metadataOps.createTable(info);
+
+                Table table = catalog.loadTable(identifier);
+                Assert.assertEquals(location, table.location());
+                Assert.assertFalse(table.properties().containsKey("location"));
+                Assert.assertEquals("doris", table.properties().get("owner"));
+                Assert.assertEquals(sorted, !table.sortOrder().isUnsorted());
+                if (sorted) {
+                    Assert.assertEquals(table.schema().findField("id").fieldId(),
+                            table.sortOrder().fields().get(0).sourceId());
+                }
+            }
+        }
     }
 
     public void createTable(String sql) throws UserException {
