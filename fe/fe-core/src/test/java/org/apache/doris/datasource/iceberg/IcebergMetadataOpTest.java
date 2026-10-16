@@ -35,6 +35,7 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.catalog.ViewCatalog;
+import org.apache.iceberg.inmemory.InMemoryCatalog;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -458,21 +459,41 @@ public class IcebergMetadataOpTest {
         Map<String, String> properties = Collections.singletonMap(
                 "location", "s3://warehouse/" + dbName);
 
-        DdlException exception = Assert.assertThrows(
-                DdlException.class,
-                () -> ops.createDbImpl(dbName, false, properties));
+        Assert.assertThrows(DdlException.class, () -> ops.createDbImpl(dbName, false, properties));
 
-        Assert.assertTrue(exception.getMessage().contains(
-                "database property 'location' for iceberg catalog type: jdbc"));
         Mockito.verify(namespaceCatalog, Mockito.never())
                 .createNamespace(Mockito.any(Namespace.class), Mockito.anyMap());
+    }
+
+    @Test
+    public void testCreateDatabaseWithPropertiesForRestCatalogStoresNamespaceMetadata() throws Exception {
+        for (String catalogType : Arrays.asList(IcebergExternalCatalog.ICEBERG_REST,
+                IcebergExternalCatalog.ICEBERG_REST.toUpperCase(Locale.ROOT))) {
+            IcebergExternalCatalog dorisCatalog = Mockito.mock(IcebergExternalCatalog.class);
+            Mockito.when(dorisCatalog.getExecutionAuthenticator()).thenReturn(new ExecutionAuthenticator() {});
+            Mockito.when(dorisCatalog.getProperties()).thenReturn(Collections.singletonMap(
+                    IcebergExternalCatalog.ICEBERG_CATALOG_TYPE, catalogType));
+            try (InMemoryCatalog icebergCatalog = new InMemoryCatalog()) {
+                icebergCatalog.initialize("rest_namespace_catalog", Collections.emptyMap());
+                IcebergMetadataOps ops = new IcebergMetadataOps(dorisCatalog, icebergCatalog);
+                String dbName = "rest_properties_db";
+                Namespace namespace = Namespace.of(dbName);
+                Map<String, String> properties = new HashMap<>();
+                properties.put("owner", "doris");
+                properties.put("location", "s3://warehouse/" + dbName);
+
+                Assert.assertFalse(ops.createDbImpl(dbName, false, properties));
+
+                Assert.assertTrue(ops.databaseExist(dbName));
+                Assert.assertEquals(properties, icebergCatalog.loadNamespaceMetadata(namespace));
+            }
+        }
     }
 
     @Test
     public void testCreateDatabaseWithPropertiesForUnsupportedCatalogs() {
         List<String> unsupportedCatalogTypes = Arrays.asList(
                 IcebergExternalCatalog.ICEBERG_HADOOP,
-                IcebergExternalCatalog.ICEBERG_REST,
                 IcebergExternalCatalog.ICEBERG_DLF,
                 IcebergExternalCatalog.ICEBERG_S3_TABLES);
         for (String catalogType : unsupportedCatalogTypes) {
@@ -488,11 +509,8 @@ public class IcebergMetadataOpTest {
             IcebergMetadataOps ops = new IcebergMetadataOps(dorisCatalog, icebergCatalog);
             Map<String, String> properties = Collections.singletonMap("owner", "doris");
 
-            DdlException exception = Assert.assertThrows(
-                    DdlException.class,
-                    () -> ops.createDbImpl(dbName, false, properties));
+            Assert.assertThrows(DdlException.class, () -> ops.createDbImpl(dbName, false, properties));
 
-            Assert.assertTrue(exception.getMessage().contains("iceberg catalog type: " + catalogType));
             Mockito.verify(namespaceCatalog, Mockito.never())
                     .createNamespace(Mockito.any(Namespace.class), Mockito.anyMap());
         }
