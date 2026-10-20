@@ -38,6 +38,16 @@ ENV PATH=$PATH:$JAVA_HOME/bin:/opt/apache-doris/be/bin
 # Copy built BE directory from builder stage
 COPY --from=builder /root/output/be /opt/apache-doris/be
 
+ARG DORIS_HOME=/opt/apache-doris/be
+
+# Download JDBC drivers
+ARG POSTGRESQL_JDBC_VERSION=42.7.14
+ARG MYSQL_JDBC_VERSION=26.7.0
+
+RUN mkdir -p ${DORIS_HOME}/jdbc_drivers
+RUN curl -L -o ${DORIS_HOME}/jdbc_drivers/postgresql.jar https://repo1.maven.org/maven2/org/postgresql/postgresql/$POSTGRESQL_JDBC_VERSION/postgresql-$POSTGRESQL_JDBC_VERSION.jar
+RUN curl -L -o ${DORIS_HOME}/jdbc_drivers/mysql-connector-j.jar https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/$MYSQL_JDBC_VERSION/mysql-connector-j-$MYSQL_JDBC_VERSION.jar
+
 # Copy init scripts and resources from source repository
 COPY docker/runtime/be/resource/be_*.sh /opt/apache-doris/
 

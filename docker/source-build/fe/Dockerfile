@@ -38,6 +38,16 @@ ENV PATH=$PATH:$JAVA_HOME/bin:/opt/apache-doris/fe/bin
 # Copy built FE directory from builder stage
 COPY --from=builder /root/output/fe /opt/apache-doris/fe
 
+ARG DORIS_HOME=/opt/apache-doris/fe
+
+# Download JDBC drivers
+ARG POSTGRESQL_JDBC_VERSION=42.7.14
+ARG MYSQL_JDBC_VERSION=26.7.0
+
+RUN mkdir -p ${DORIS_HOME}/jdbc_drivers
+RUN curl -L -o ${DORIS_HOME}/jdbc_drivers/postgresql.jar https://repo1.maven.org/maven2/org/postgresql/postgresql/$POSTGRESQL_JDBC_VERSION/postgresql-$POSTGRESQL_JDBC_VERSION.jar
+RUN curl -L -o ${DORIS_HOME}/jdbc_drivers/mysql-connector-j.jar https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/$MYSQL_JDBC_VERSION/mysql-connector-j-$MYSQL_JDBC_VERSION.jar
+
 # Copy init scripts and resources from source repository
 ADD docker/runtime/fe/resource/init_fe.sh /usr/local/bin/
 
