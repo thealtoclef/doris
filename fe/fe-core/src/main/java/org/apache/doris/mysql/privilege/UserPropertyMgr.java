@@ -93,8 +93,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public int getQueryTimeout(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return 0;
         }
@@ -102,8 +101,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public int getInsertTimeout(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return 0;
         }
@@ -111,25 +109,29 @@ public class UserPropertyMgr implements Writable {
     }
 
     public long getMaxConn(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return 0;
         }
         return existProperty.getMaxConn();
     }
 
+    /** Every account and, while a user property provider is enabled, every served user. */
     public Map<String, Long> getMaxConnForAllUsers() {
         Map<String, Long> maxConnByUser = Maps.newHashMap();
-        for (Entry<String, UserProperty> entry : propertyMap.entrySet()) {
-            maxConnByUser.put(entry.getKey(), entry.getValue().getMaxConn());
+        for (String user : propertyMap.keySet()) {
+            maxConnByUser.put(user, getMaxConn(user));
+        }
+        if (UserPropertyProvider.isEnabled()) {
+            for (Entry<String, UserProperty> entry : UserPropertyProvider.served().getUsers().entrySet()) {
+                maxConnByUser.put(entry.getKey(), entry.getValue().getMaxConn());
+            }
         }
         return maxConnByUser;
     }
 
     public long getMaxQueryInstances(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return Config.default_max_query_instances;
         }
@@ -137,6 +139,9 @@ public class UserPropertyMgr implements Writable {
     }
 
     public String getDefaultCloudCluster(String user) throws DdlException {
+        if (UserPropertyProvider.isEnabled()) {
+            return resolve(user).getDefaultCloudCluster();
+        }
         UserProperty property = propertyMap.get(user);
         if (property == null) {
             throw new DdlException("Unknown user(" + user + ")");
@@ -145,10 +150,11 @@ public class UserPropertyMgr implements Writable {
     }
 
     public List<String> getCloudClusterUsers(Set<String> users, String clusterName) {
+        Map<String, UserProperty> properties = effectiveProperties();
         List<String> ret = new ArrayList<>();
         users.forEach(
                 u -> {
-                    UserProperty userProperty = propertyMap.get(u);
+                    UserProperty userProperty = properties.get(u);
                     if (userProperty == null) {
                         return;
                     }
@@ -161,8 +167,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public int getParallelFragmentExecInstanceNum(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return -1;
         }
@@ -170,8 +175,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public ComputeGroup getComputeGroup(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return ComputeGroup.INVALID_COMPUTE_GROUP;
         }
@@ -192,8 +196,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public List<List<String>> fetchUserProperty(String qualifiedUser) throws AnalysisException {
-        UserProperty property = propertyMap.get(qualifiedUser);
-        property = getPropertyIfNull(qualifiedUser, property);
+        UserProperty property = resolve(qualifiedUser);
         if (property == null) {
             throw new AnalysisException("User " + qualifiedUser + " does not exist");
         }
@@ -201,8 +204,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public String[] getSqlBlockRules(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return new String[]{};
         }
@@ -210,8 +212,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public int getCpuResourceLimit(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return -1;
         }
@@ -219,8 +220,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public long getExecMemLimit(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return -1;
         }
@@ -228,8 +228,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public String getInitCatalog(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return null;
         }
@@ -237,16 +236,21 @@ public class UserPropertyMgr implements Writable {
     }
 
     public String getWorkloadGroup(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return null;
         }
         return existProperty.getWorkloadGroup();
     }
 
+    /**
+     * Whether a user's properties name the workload group. While a user property provider is enabled only the
+     * served document counts: stored properties are not in effect, and SET PROPERTY, which would be the way to
+     * clear them, is refused. A stored workload group dropped meanwhile makes that user's queries fail once the
+     * provider is turned off, until SET PROPERTY names another.
+     */
     public Pair<Boolean, String> isWorkloadGroupInUse(String groupName) {
-        for (Entry<String, UserProperty> entry : propertyMap.entrySet()) {
+        for (Entry<String, UserProperty> entry : effectiveProperties().entrySet()) {
             if (entry.getValue().getWorkloadGroup().equals(groupName)) {
                 return Pair.of(true, entry.getKey());
             }
@@ -255,8 +259,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public boolean getEnablePreferCachedRowset(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return false;
         }
@@ -264,8 +267,7 @@ public class UserPropertyMgr implements Writable {
     }
 
     public long getQueryFreshnessToleranceMs(String qualifiedUser) {
-        UserProperty existProperty = propertyMap.get(qualifiedUser);
-        existProperty = getPropertyIfNull(qualifiedUser, existProperty);
+        UserProperty existProperty = resolve(qualifiedUser);
         if (existProperty == null) {
             return -1;
         }
@@ -273,6 +275,24 @@ public class UserPropertyMgr implements Writable {
     }
 
     /**
+     * The property a user's reads use. While a user property provider is enabled, the served document is
+     * the only source, for internal and external-auth users alike: an unlisted user gets the defaults and
+     * stored properties are ignored (they are kept, and apply again if the provider is turned off).
+     */
+    private UserProperty resolve(String qualifiedUser) {
+        if (UserPropertyProvider.isEnabled()) {
+            UserProperty served = UserPropertyProvider.served().get(qualifiedUser);
+            return served != null ? served : DEFAULT_USER_PROPERTY;
+        }
+        return getPropertyIfNull(qualifiedUser, propertyMap.get(qualifiedUser));
+    }
+
+    private Map<String, UserProperty> effectiveProperties() {
+        return UserPropertyProvider.isEnabled() ? UserPropertyProvider.served().getUsers() : propertyMap;
+    }
+
+    /**
+     * The property a read uses when no user property provider is configured (see {@link #resolve}).
      * The method determines which user property to return based on the existProperty parameter
      * and system configuration:
      * If existProperty is not null, return it directly.
