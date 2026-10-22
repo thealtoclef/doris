@@ -17,8 +17,11 @@
 
 package org.apache.doris.nereids.trees.plans.commands;
 
+import org.apache.doris.analysis.RedirectStatus;
 import org.apache.doris.analysis.StmtType;
+import org.apache.doris.common.AnalysisException;
 import org.apache.doris.common.Pair;
+import org.apache.doris.mysql.privilege.UserPropertyProvider;
 import org.apache.doris.nereids.trees.plans.PlanType;
 import org.apache.doris.nereids.trees.plans.commands.info.SetUserPropertyVarOp;
 import org.apache.doris.nereids.trees.plans.visitor.PlanVisitor;
@@ -41,8 +44,20 @@ public class SetUserPropertiesCommand extends Command implements ForwardWithSync
         this.setUserPropertyVarOpList = setUserPropertyVarOpList;
     }
 
+    /**
+     * Not forwarded while this frontend has a user property provider: the refusal must not depend on whether
+     * the master has one too.
+     */
+    @Override
+    public RedirectStatus toRedirectStatus() {
+        return UserPropertyProvider.isEnabled() ? RedirectStatus.NO_FORWARD : RedirectStatus.FORWARD_WITH_SYNC;
+    }
+
     @Override
     public void run(ConnectContext ctx, StmtExecutor executor) throws Exception {
+        if (UserPropertyProvider.isEnabled()) {
+            throw new AnalysisException("Set property is prohibited when the user property provider is enabled.");
+        }
         List<Pair<String, String>> properties = new ArrayList<>(setUserPropertyVarOpList.size());
         for (SetUserPropertyVarOp op : setUserPropertyVarOpList) {
             op.validate(ctx);

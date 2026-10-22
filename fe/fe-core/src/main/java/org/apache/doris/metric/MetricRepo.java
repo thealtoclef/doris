@@ -50,6 +50,7 @@ import org.apache.doris.mtmv.MTMVRefreshEnum.RefreshMethod;
 import org.apache.doris.mtmv.MTMVRefreshEnum.RefreshTrigger;
 import org.apache.doris.mtmv.MTMVUtil;
 import org.apache.doris.mysql.privilege.Auth;
+import org.apache.doris.mysql.privilege.UserPropertyProvider;
 import org.apache.doris.nereids.NereidsPlanner;
 import org.apache.doris.persist.EditLog;
 import org.apache.doris.qe.QeProcessorImpl;
@@ -343,6 +344,10 @@ public final class MetricRepo {
         feVersion.addLabel(new MetricLabel("hotfix", String.valueOf(Version.DORIS_BUILD_VERSION_HOTFIX)));
         feVersion.addLabel(new MetricLabel("short_hash", Version.DORIS_BUILD_SHORT_HASH));
         DORIS_METRIC_REGISTER.addMetrics(feVersion);
+
+        if (UserPropertyProvider.isEnabled()) {
+            initUserPropertyProviderMetrics();
+        }
 
         // load jobs
         for (EtlJobType jobType : EtlJobType.values()) {
@@ -1680,12 +1685,46 @@ public final class MetricRepo {
         });
     }
 
+    private static void initUserPropertyProviderMetrics() {
+        DORIS_METRIC_REGISTER.addMetrics(new GaugeMetric<Long>("user_property_provider_version",
+                MetricUnit.NOUNIT, "version of the user property document held, 0 before any") {
+            @Override
+            public Long getValue() {
+                return UserPropertyProvider.served().getVersion();
+            }
+        });
+        DORIS_METRIC_REGISTER.addMetrics(new GaugeMetric<Long>("user_property_provider_refused_users",
+                MetricUnit.NOUNIT, "users the held user property document lists whose properties Doris refused") {
+            @Override
+            public Long getValue() {
+                return (long) UserPropertyProvider.served().getRejectedUsers().size();
+            }
+        });
+        DORIS_METRIC_REGISTER.addMetrics(new GaugeMetric<Long>("user_property_provider_last_success_timestamp_ms",
+                MetricUnit.MILLISECONDS, "time of the last poll the user property provider answered, 0 before any") {
+            @Override
+            public Long getValue() {
+                return UserPropertyProvider.lastSuccessMs();
+            }
+        });
+    }
+
     public static void syncUserConnectionMaxMetrics() {
+        syncUserConnectionMaxMetrics(Collections.emptySet());
+    }
+
+    /** Updates every user's gauge, and removes the gauge of each of the given users who no longer has one. */
+    public static void syncUserConnectionMaxMetrics(Collection<String> usersMaybeGone) {
         if (USER_GAUGE_CONNECTION_MAX == null) {
             return;
         }
-        Env.getServingEnv().getAuth().getMaxConnForAllUsers()
-                .forEach(MetricRepo::updateUserConnectionMaxMetric);
+        Map<String, Long> maxConnByUser = Env.getServingEnv().getAuth().getMaxConnForAllUsers();
+        maxConnByUser.forEach(MetricRepo::updateUserConnectionMaxMetric);
+        for (String user : usersMaybeGone) {
+            if (!maxConnByUser.containsKey(user)) {
+                removeUserConnectionMaxMetric(user);
+            }
+        }
     }
 
     public static void updateUserConnectionMaxMetric(Auth auth, String user, long maxConn) {

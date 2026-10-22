@@ -20,8 +20,12 @@ package org.apache.doris.mysql.privilege;
 import org.apache.doris.analysis.ResourceTypeEnum;
 import org.apache.doris.catalog.Env;
 import org.apache.doris.cloud.qe.ComputeGroupException;
+import org.apache.doris.cloud.system.CloudSystemInfoService;
 import org.apache.doris.common.AnalysisException;
+import org.apache.doris.common.Config;
 import org.apache.doris.common.DdlException;
+import org.apache.doris.common.ErrorCode;
+import org.apache.doris.common.ErrorReport;
 import org.apache.doris.common.Pair;
 import org.apache.doris.common.UserException;
 import org.apache.doris.datasource.CatalogIf;
@@ -188,6 +192,22 @@ public class UserProperty {
     }
 
     public void update(List<Pair<String, String>> properties, boolean isReplay) throws UserException {
+        update(properties, isReplay, true);
+    }
+
+    /**
+     * Applies properties a user property provider serves. They are checked like SET PROPERTY, except that
+     * a default compute group is not checked against the user's USAGE privilege: a user who logs in through
+     * an authentication integration has no stored privileges to check, and USAGE is still checked when a
+     * query uses the compute group. That the compute group exists is checked here, as SET PROPERTY checks it
+     * before it reaches {@link #update}.
+     */
+    void updateServed(List<Pair<String, String>> properties) throws UserException {
+        update(properties, false, false);
+    }
+
+    private void update(List<Pair<String, String>> properties, boolean isReplay, boolean checkComputeGroupPriv)
+            throws UserException {
         // copy
         long newMaxConn = this.commonProperties.getMaxConn();
         long newMaxQueryInstances = this.commonProperties.getMaxQueryInstances();
@@ -227,9 +247,11 @@ public class UserProperty {
                     throw new DdlException(PROP_MAX_USER_CONNECTIONS + " is not valid, must between 1 and 10000");
                 }
             } else if (keyArr[0].equalsIgnoreCase(DEFAULT_CLOUD_CLUSTER)) {
-                newDefaultCloudCluster = checkCloudDefaultCluster(keyArr, value, DEFAULT_CLOUD_CLUSTER, isReplay);
+                newDefaultCloudCluster = checkCloudDefaultCluster(keyArr, value, DEFAULT_CLOUD_CLUSTER, isReplay,
+                        checkComputeGroupPriv);
             } else if (keyArr[0].equalsIgnoreCase(DEFAULT_COMPUTE_GROUP)) {
-                newDefaultCloudCluster = checkCloudDefaultCluster(keyArr, value, DEFAULT_COMPUTE_GROUP, isReplay);
+                newDefaultCloudCluster = checkCloudDefaultCluster(keyArr, value, DEFAULT_COMPUTE_GROUP, isReplay,
+                        checkComputeGroupPriv);
             } else if (keyArr[0].equalsIgnoreCase(PROP_MAX_QUERY_INSTANCES)) {
                 // set property "max_query_instances" = "1000"
                 if (keyArr.length != 1) {
@@ -378,23 +400,29 @@ public class UserProperty {
         defaultCloudCluster = newDefaultCloudCluster;
     }
 
-    private String checkCloudDefaultCluster(String[] keyArr, String value, String defaultComputeGroup, boolean isReplay)
-            throws ComputeGroupException, DdlException {
+    private String checkCloudDefaultCluster(String[] keyArr, String value, String defaultComputeGroup,
+            boolean isReplay, boolean checkPriv) throws ComputeGroupException, DdlException {
         // isReplay not check auth, not throw exception
         if (isReplay) {
             return value;
         }
         // check cluster auth
         // get all users with same name but different host
-        AccessControllerManager am = Env.getCurrentEnv().getAccessManager();
-        List<User> users = am.getAuth()
-                .getUserManager().getUserByName(qualifiedUser);
-        boolean pass = false;
-        for (User user : users) {
-            if (!Strings.isNullOrEmpty(value) && am.checkCloudPriv(
-                    user.getUserIdentity(), value, PrivPredicate.USAGE, ResourceTypeEnum.CLUSTER)) {
-                pass = true;
+        boolean pass = !checkPriv;
+        if (checkPriv) {
+            AccessControllerManager am = Env.getCurrentEnv().getAccessManager();
+            List<User> users = am.getAuth()
+                    .getUserManager().getUserByName(qualifiedUser);
+            for (User user : users) {
+                if (!Strings.isNullOrEmpty(value) && am.checkCloudPriv(
+                        user.getUserIdentity(), value, PrivPredicate.USAGE, ResourceTypeEnum.CLUSTER)) {
+                    pass = true;
+                }
             }
+        }
+        if (!checkPriv && Config.isCloudMode() && !Strings.isNullOrEmpty(value)
+                && !((CloudSystemInfoService) Env.getCurrentSystemInfo()).getCloudClusterNames().contains(value)) {
+            ErrorReport.reportDdlException(ErrorCode.ERR_CLOUD_CLUSTER_ERROR, value);
         }
         if (!pass && !Strings.isNullOrEmpty(value)) {
             throw new ComputeGroupException(String.format("set default compute group failed, "

@@ -644,7 +644,14 @@ public class Auth implements Writable {
             userManager.removeUser(userIdent);
             if (CollectionUtils.isEmpty(userManager.getUserByName(userIdent.getQualifiedUser()))) {
                 propertyMgr.dropUser(userIdent);
-                MetricRepo.removeUserConnectionMaxMetric(this, userIdent.getQualifiedUser());
+                // a name the user property document lists keeps its served limit without an account
+                if (UserPropertyProvider.isEnabled()
+                        && UserPropertyProvider.served().get(userIdent.getQualifiedUser()) != null) {
+                    MetricRepo.updateUserConnectionMaxMetric(this, userIdent.getQualifiedUser(),
+                            propertyMgr.getMaxConn(userIdent.getQualifiedUser()));
+                } else {
+                    MetricRepo.removeUserConnectionMaxMetric(this, userIdent.getQualifiedUser());
+                }
             }
 
             if (!isReplay) {
