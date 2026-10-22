@@ -28,6 +28,7 @@ import org.apache.doris.common.PatternMatcher;
 import org.apache.doris.common.PatternMatcherWrapper;
 import org.apache.doris.common.proc.UserPropertyProcNode;
 import org.apache.doris.mysql.privilege.PrivPredicate;
+import org.apache.doris.mysql.privilege.UserPropertyProvider;
 import org.apache.doris.nereids.trees.plans.PlanType;
 import org.apache.doris.nereids.trees.plans.commands.info.SetUserPropertyVarOp;
 import org.apache.doris.nereids.trees.plans.visitor.PlanVisitor;
@@ -40,6 +41,7 @@ import org.apache.doris.qe.StmtExecutor;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import java.util.List;
 import java.util.Map;
@@ -120,7 +122,10 @@ public class ShowUserPropertyCommand extends ShowCommand {
     }
 
     private List<List<String>> getRowsForAllUser() throws AnalysisException {
-        Set<String> allUser = Env.getCurrentEnv().getAuth().getAllUser();
+        Set<String> allUser = Sets.newTreeSet(Env.getCurrentEnv().getAuth().getAllUser());
+        if (UserPropertyProvider.isEnabled()) {
+            allUser.addAll(UserPropertyProvider.served().getUsers().keySet());
+        }
         List<List<String>> result = Lists.newArrayListWithCapacity(allUser.size());
 
         for (String user : allUser) {

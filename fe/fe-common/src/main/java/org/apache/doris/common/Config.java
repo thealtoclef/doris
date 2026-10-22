@@ -3294,6 +3294,25 @@ public class Config extends ConfigBase {
                     + "multiple integration names are comma-separated"})
     public static String authentication_chain = "";
 
+    @ConfField(description = "URL of the user property provider. When set, the properties of every user, "
+            + "internal or logged in through an authentication integration, come only from the document served "
+            + "at this URL: an unlisted user gets the defaults, and SET PROPERTY is refused. Empty disables it. "
+            + "Like the Ranger policy service, the provider is not authenticated: whoever can answer the poll "
+            + "sets every user's limits, so it belongs inside one network guarded by network policy.")
+    public static String user_property_provider_url = "";
+
+    @ConfField(description = "Interval between polls of the user property provider, in milliseconds; a value "
+            + "that is not positive uses 30000")
+    public static long user_property_provider_poll_interval_ms = 30000;
+
+    @ConfField(description = "Connect timeout for the user property provider, in milliseconds; a value that "
+            + "is not positive uses 10000")
+    public static long user_property_provider_connect_timeout_ms = 10000;
+
+    @ConfField(description = "Read timeout for the user property provider, in milliseconds; a value that is "
+            + "not positive uses 30000")
+    public static long user_property_provider_read_timeout_ms = 30000;
+
     @ConfField(mutable = true, masterOnly = false, description = {"指定 trino-connector catalog 的插件默认加载路径",
             "Specify the default plugins loading path for the trino-connector catalog"})
     public static String trino_connector_plugin_dir = EnvUtils.getDorisHome() + "/plugins/connectors";

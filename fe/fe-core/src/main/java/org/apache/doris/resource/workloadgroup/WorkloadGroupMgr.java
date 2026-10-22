@@ -32,6 +32,7 @@ import org.apache.doris.common.io.Writable;
 import org.apache.doris.common.proc.BaseProcResult;
 import org.apache.doris.common.proc.ProcResult;
 import org.apache.doris.mysql.privilege.PrivPredicate;
+import org.apache.doris.mysql.privilege.UserPropertyProvider;
 import org.apache.doris.persist.DropWorkloadGroupOperationLog;
 import org.apache.doris.persist.gson.GsonPostProcessable;
 import org.apache.doris.persist.gson.GsonUtils;
@@ -321,6 +322,11 @@ public class WorkloadGroupMgr implements Writable, GsonPostProcessable {
         // if a workload group exists in user property, it should not be dropped
         // user need to reset user property first
         Pair<Boolean, String> ret = Env.getCurrentEnv().getAuth().isWorkloadGroupInUse(workloadGroupName);
+        if (ret.first && UserPropertyProvider.isEnabled()) {
+            throw new DdlException("Workload group " + workloadGroupName + " is set for user " + ret.second
+                    + " by the user property document; serve the user another 'default_workload_group' from "
+                    + Config.user_property_provider_url + ", then you can drop the group.");
+        }
         if (ret.first) {
             throw new DdlException("Workload group " + workloadGroupName + " is set for user " + ret.second
                     + ", you can reset the user's property(eg, "

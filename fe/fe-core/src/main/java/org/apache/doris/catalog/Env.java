@@ -170,6 +170,7 @@ import org.apache.doris.mysql.authenticate.AuthenticatorManager;
 import org.apache.doris.mysql.privilege.AccessControllerManager;
 import org.apache.doris.mysql.privilege.Auth;
 import org.apache.doris.mysql.privilege.PrivPredicate;
+import org.apache.doris.mysql.privilege.UserPropertyProvider;
 import org.apache.doris.nereids.jobs.load.LabelProcessor;
 import org.apache.doris.nereids.lineage.LineageEventProcessor;
 import org.apache.doris.nereids.stats.HboPlanStatisticsManager;
@@ -298,6 +299,7 @@ import org.apache.doris.transaction.GlobalExternalTransactionInfoMgr;
 import org.apache.doris.transaction.GlobalTransactionMgrIface;
 import org.apache.doris.transaction.PublishVersionDaemon;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
@@ -493,6 +495,7 @@ public class Env {
     private AuthenticatorManager authenticatorManager;
 
     private DomainResolver domainResolver;
+    private final UserPropertyProvider userPropertyProvider;
 
     private TabletSchedulerStat stat;
 
@@ -787,6 +790,9 @@ public class Env {
         this.accessManager = new AccessControllerManager(auth);
         this.authenticatorManager = new AuthenticatorManager(AuthenticateType.getAuthTypeConfigString());
         this.domainResolver = new DomainResolver(auth);
+        // a checkpoint Env replays into an image and serves no connection, so it never polls
+        this.userPropertyProvider = !isCheckpointCatalog && UserPropertyProvider.isEnabled()
+                ? new UserPropertyProvider() : null;
 
         this.metaContext = new MetaContext();
         this.metaContext.setThreadLocalInfo();
@@ -2048,6 +2054,24 @@ public class Env {
         workloadRuntimeStatusMgr.start();
         admissionControl.start();
         splitSourceManager.start();
+
+        if (userPropertyProvider != null) {
+            userPropertyProvider.start();
+        }
+    }
+
+    /**
+     * Reports this frontend ready for reads, after loading the cached user property document if one is
+     * configured. A follower is ready before its non-master daemon threads start, so loading the cache there
+     * would leave connections accepted on the defaults.
+     */
+    @VisibleForTesting
+    void becomeReadyToRead() {
+        if (userPropertyProvider != null) {
+            userPropertyProvider.loadCacheOnce();
+        }
+        canRead.set(true);
+        isReady.set(true);
     }
 
     private boolean transferToNonMaster(FrontendNodeType newType) {
@@ -3071,8 +3095,7 @@ public class Env {
                         }
                     }
                 } else {
-                    canRead.set(true);
-                    isReady.set(true);
+                    becomeReadyToRead();
                 }
             }
         };

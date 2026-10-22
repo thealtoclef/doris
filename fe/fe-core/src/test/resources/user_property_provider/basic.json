@@ -1,0 +1,1 @@
+{"version":4744942945230521452,"users":{"blue@cake.vn":{"max_user_connections":"20"},"etl":{"max_user_connections":"1000","query_timeout":"3600"},"system:serviceaccount:analytics:airflow":{"exec_mem_limit":"8589934592"}}}
