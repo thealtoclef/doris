@@ -159,3 +159,4 @@ compile_commands.json
 
 .worktrees/
 .worktree_initialized
+.codegraph
