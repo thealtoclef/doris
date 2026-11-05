@@ -1041,16 +1041,7 @@ if [[ "${BUILD_FE}" -eq 1 ]]; then
     rm -rf "${DORIS_OUTPUT}/fe/plugins/authentication/oidc"
     mkdir -p "${DORIS_OUTPUT}/fe/plugins/authentication/oidc/lib"
     cp -r -p "${oidc_plugin_dir}"/fe-authentication-plugin-oidc-*.jar "${DORIS_OUTPUT}/fe/plugins/authentication/oidc"/
-    cp -r -p "${oidc_plugin_dir}/lib"/*.jar "${DORIS_OUTPUT}/fe/plugins/authentication/oidc/lib"/
-
-    if [ "${TARGET_SYSTEM}" = "Darwin" ] || [ "${TARGET_SYSTEM}" = "Linux" ]; then
-      mkdir -p "${DORIS_OUTPUT}/fe/arthas"
-      rm -rf "${DORIS_OUTPUT}/fe/arthas/*"
-      unzip -o "${DORIS_OUTPUT}/fe/lib/arthas-packaging-*.jar" arthas-bin.zip -d "${DORIS_OUTPUT}/fe/arthas/"
-      unzip -o "${DORIS_OUTPUT}/fe/arthas/arthas-bin.zip" -d "${DORIS_OUTPUT}/fe/arthas/"
-      rm "${DORIS_OUTPUT}/fe/arthas/math-game.jar"
-      rm "${DORIS_OUTPUT}/fe/arthas/arthas-bin.zip"
-    fi
+    cp -r -p "${oidc_plugin_dir}/lib"/*.jar "${DORIS_OUTPUT}/fe/plugins/authentication/oidc/lib/"
 fi
 
 if [[ "${OUTPUT_BE_BINARY}" -eq 1 ]]; then
