@@ -769,11 +769,13 @@ FE_MODULES="$(
 # Clean and build Backend
 if [[ "${BUILD_BE}" -eq 1 ]]; then
 
-    update_submodule "contrib/datasketches-cpp" "datasketches-cpp" "https://github.com/apache/datasketches-cpp/archive/refs/heads/master.tar.gz"
-    update_submodule "contrib/apache-orc" "apache-orc" "https://github.com/apache/doris-thirdparty/archive/refs/heads/orc.tar.gz"
-    update_submodule "contrib/clucene" "clucene" "https://github.com/apache/doris-thirdparty/archive/refs/heads/clucene.tar.gz"
-    update_submodule "contrib/openblas" "openblas" "https://github.com/apache/doris-thirdparty/archive/refs/heads/openblas.tar.gz"
-    update_submodule "contrib/faiss" "faiss" "https://github.com/apache/doris-thirdparty/archive/refs/heads/faiss.tar.gz"
+    # Commit archives: without .git (Docker builds ignore it) the tarball fallback below cannot
+    # read the pinned submodule SHAs, so the URLs are pinned here to match `git ls-tree HEAD contrib/`.
+    update_submodule "contrib/datasketches-cpp" "datasketches-cpp" "https://github.com/apache/datasketches-cpp/archive/de8553ba372e618382c2e7b44b0ffc9422b9458c.tar.gz"
+    update_submodule "contrib/apache-orc" "apache-orc" "https://github.com/apache/doris-thirdparty/archive/be0f1b73a7aeb78824a03e0dcb692c50a176d513.tar.gz"
+    update_submodule "contrib/clucene" "clucene" "https://github.com/apache/doris-thirdparty/archive/08d45e541fef1e48dc4ab00d2d5fde9569b49ee3.tar.gz"
+    update_submodule "contrib/openblas" "openblas" "https://github.com/apache/doris-thirdparty/archive/77986e49425532bf8f651db74cbe1579bcb4a5bf.tar.gz"
+    update_submodule "contrib/faiss" "faiss" "https://github.com/apache/doris-thirdparty/archive/032afe95f671cd50b82d52d901345600776d7855.tar.gz"
     if [[ -e "${DORIS_HOME}/gensrc/build/gen_cpp/version.h" ]]; then
         rm -f "${DORIS_HOME}/gensrc/build/gen_cpp/version.h"
     fi
