@@ -245,7 +245,7 @@ under the License.
         <cos-api.version>5.6.269</cos-api.version>
         <tencentcloud-sdk-java-sts.version>3.1.678</tencentcloud-sdk-java-sts.version>
         <huaweicloud-sdk-iam.version>3.1.20</huaweicloud-sdk-iam.version>
-        <esdk-obs.version>3.21.11</esdk-obs.version>
+        <esdk-obs.version>3.26.9</esdk-obs.version>
         <huaweiobs.version>3.1.1-hw-46</huaweiobs.version>
         <!--suppress UnresolvedMavenProperty -->
         <doris.thirdparty>${fe.dir}/../thirdparty</doris.thirdparty>
@@ -271,7 +271,7 @@ under the License.
         <commons-math3.version>3.6.1</commons-math3.version>
         <commons-validator.version>1.9.0</commons-validator.version>
         <gson.version>2.10.1</gson.version>
-        <guava.version>33.2.1-jre</guava.version>
+        <guava.version>33.7.2-jre</guava.version>
         <!-- Keep Jackson 2 aligned on the LTS maintenance release fixing CVE-2026-110879. -->
         <jackson.version>2.21.8</jackson.version>
         <javassist.version>3.18.2-GA</javassist.version>
@@ -410,7 +410,7 @@ under the License.
              Resolve its official 1.8.1 relocation POM, then manage the maintained coordinate at
              1.11.1 to fix CVE-2025-12183, CVE-2025-66566, and CVE-2026-59949. -->
         <lz4-java-relocation.version>1.8.1</lz4-java-relocation.version>
-        <lz4-java.version>1.11.1</lz4-java.version>
+        <lz4-java.version>1.11.4</lz4-java.version>
         <immutables.version>2.9.3</immutables.version> 
         <!-- Fix PackagerResolver path traversal (CVE-2026-26032). -->
         <ivy.version>2.6.0</ivy.version>
