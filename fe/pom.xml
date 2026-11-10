@@ -372,11 +372,11 @@ under the License.
         <httpclient5.version>5.6.4</httpclient5.version>
         <httpcore5.version>5.4.3</httpcore5.version>
         <aws-java-sdk.version>1.12.669</aws-java-sdk.version>
-        <mariadb-java-client.version>3.0.9</mariadb-java-client.version>
+        <mariadb-java-client.version>3.5.11</mariadb-java-client.version>
         <postgresql.version>42.7.13</postgresql.version>
         <hadoop.version>3.4.2</hadoop.version>
         <re2j.version>1.8</re2j.version>
-        <hadoop.thirdparty.guava.version>1.2.0</hadoop.thirdparty.guava.version>
+        <hadoop.thirdparty.guava.version>1.6.0</hadoop.thirdparty.guava.version>
         <hadoop.thirdparty.protobuf_3_25.version>1.5.0</hadoop.thirdparty.protobuf_3_25.version>
         <hbase.version>2.6.6</hbase.version>
         <jline.version>3.30.14</jline.version>
@@ -399,7 +399,7 @@ under the License.
              CVE-2025-14813, CVE-2026-0636, CVE-2026-3505, CVE-2026-5588, and CVE-2026-5598. -->
         <bcprov-jdk18on.version>1.84</bcprov-jdk18on.version>
         <woodstox.version>6.5.1</woodstox.version>
-        <kerby.version>2.0.3</kerby.version>
+        <kerby.version>2.1.2</kerby.version>
         <jettison.version>1.5.4</jettison.version>
         <!-- Spring Framework 7 uses the Servlet 6.1 / Jetty EE11 baseline. -->
         <jetty.version>12.1.14</jetty.version>
