@@ -21,9 +21,10 @@ FROM apache/doris:build-env-ldb-toolchain-latest AS builder
 # Copy the entire Doris source code
 COPY . .
 
-# Build BE
+# Build BE. Keep java-udf: bin/start_be.sh preloads it and it is the only extension that carries libthrift,
+# which JniUtil needs when the BE starts (without it: "Failed to initialize JNI: Failed to find JniUtil class").
 RUN DISABLE_BUILD_AZURE=ON DISABLE_BUILD_UI=ON DISABLE_BE_CDC_CLIENT=ON \
-    sh build.sh --be --clean --be-extension-ignore hadoop-hudi-scanner,avro-scanner,jdbc-scanner,paimon-connector,trino-connector-scanner,max-compute-connector,java-udf,java-writer --exclude-obs-dependencies --exclude-cos-dependencies
+    sh build.sh --be --clean --be-extension-ignore hadoop-hudi-scanner,avro-scanner,jdbc-scanner,paimon-connector,trino-connector-scanner,max-compute-connector,java-writer --exclude-obs-dependencies --exclude-cos-dependencies
 
 # Stage 2: Runtime Environment following docker/runtime/be/Dockerfile
 FROM apache/doris:base-6.0
